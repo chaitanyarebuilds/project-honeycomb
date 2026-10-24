@@ -117,9 +117,15 @@ All four questions were answered "go", with these conditions:
 3. HMAC tokens now, asymmetric later. The signing key must never be reachable by the agent.
 4. When the proxy sees a honeytoken and can't tell which run sent it, we first try to identify the run (the agent authenticates to the proxy with its run token). If that isn't possible we pause every active run of that agent.
 
+## Decision on attribution (25 October 2026)
+
+Two agents argued opposite sides for one round: the proxy must verify the run token, or the proxy stays keyless and identifies the caller by source address only. We took the keyless design. The proxy handles hostile bytes and shouldn't sit next to the signing key, the log is untrusted either way, and many HTTP clients can't send proxy credentials. The cost is that a hit pauses every active run of the agent, which the events and the incident say plainly. A token claim sent to the proxy can't narrow that, because the proxy can't check it and a forged claim could point the pause at the wrong run.
+
 ## Where M3a stands
 
-Built and tested: resources and prompts through the gate, per-run state, the HTTP front door (`honeycomb-gate serve`), signed run tokens with revocation and key rotation, scopes, the agent inventory, and `honeycomb-gate posture`. M3b (egress proxy, Docker lab, S3) is next.
+M3b is built too: `honeycomb-egress`, the log ingestion in the gate, the Docker lab and S3 (15 of 15 lab checks pass, in the sandbox and in CI). The rest of this section is what M3a delivered.
+
+Built and tested: resources and prompts through the gate, per-run state, the HTTP front door (`honeycomb-gate serve`), signed run tokens with revocation and key rotation, scopes, the agent inventory, and `honeycomb-gate posture`. M3b is described above.
 
 Two small design calls we made on the way, both easy to change:
 

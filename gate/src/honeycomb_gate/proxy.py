@@ -201,6 +201,11 @@ class Gate:
             self._announce(run, claims)  # if this fails, the next request tries again
         return run
 
+    def active_runs(self, agent_id: str | None) -> list[Run]:
+        """Runs that are not paused, for one agent or (with None) for all of them."""
+        runs = [self.default, *self.http_runs.values()]
+        return [r for r in runs if not r.paused and agent_id in (None, r.agent_id)]
+
     def _announce(self, run: Run, claims: Claims) -> None:
         """First request of a run that came in with a token: note the agent, log the run."""
         first = self.inventory.note_run(run.agent_id)
@@ -828,7 +833,17 @@ async def open_gate(
                 "session.started", details={"upstreams": list(config.upstreams), "via": front_door}
             )
             gate.default.emit("identity.issued", details={"how": "minted by the gate at start-up"})
-            yield gate
+            watcher = None
+            if config.egress.log is not None:
+                from honeycomb_gate.egress_watch import EgressWatch  # imports this module
+
+                watcher = asyncio.create_task(EgressWatch(gate).run())
+            try:
+                yield gate
+            finally:
+                if watcher is not None:
+                    watcher.cancel()
+                    await asyncio.gather(watcher, return_exceptions=True)
             await gate.drain()  # let incident emails finish before the process exits
             gate.default.emit("session.ended")
     finally:

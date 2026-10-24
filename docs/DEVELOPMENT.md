@@ -32,6 +32,8 @@ You need Python 3.12 or newer and [uv](https://docs.astral.sh/uv/). On Windows 1
 | Issue, renew or revoke a run token | `uv run honeycomb-gate identity issue --agent support-bot --config ...` prints the token on its own line; also `identity renew <run id>`, `identity revoke <run id>`, `identity list`, `identity rotate-key` |
 | Agents the gate has seen | `uv run honeycomb-gate agents list --config ...` |
 | Which enforcement level is really in place | `uv run honeycomb-gate posture --config ...` |
+| Run the Docker lab (S3 and S1) | `uv run python -m lab.run_lab` (needs Docker; `--keep` leaves it running, `--no-build` reuses the image) |
+| Run the egress proxy by hand | `uv run honeycomb-egress --listen 127.0.0.1:3128 --allow partner-api:8080 --log egress.jsonl --tokens .honeycomb/tokens.json` |
 | Check email settings | copy `.env.example` to `.env`, fill it in, then `uv run honeycomb-gate notify test --config ...` |
 | Review and approve a changed tool | `uv run honeycomb-gate tools list --config ...`, then `tools show upstream__tool --config ...`, then `tools approve upstream__tool --hash <pending hash> --config ...` |
 | Lab (planned, M2 onward) | `docker compose -f lab/docker-compose.yml up --build -d`, then `uv run lab-run --scenario all` |

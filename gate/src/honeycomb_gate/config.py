@@ -1,10 +1,18 @@
 """Gate configuration: upstreams, state locations and the policy (see PHASE0-SPEC section 6)."""
 
+import ipaddress
 from pathlib import Path
 from typing import Annotated, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 from honeycomb_gate.decoys import DecoyConfig
 from honeycomb_gate.notify import NotifyConfig
@@ -52,6 +60,25 @@ class DeploymentConfig(BaseModel):
     network_enforced: bool = False
 
 
+class EgressConfig(BaseModel):
+    """Where the gate reads the egress proxy's records, and who each source address is."""
+
+    model_config = ConfigDict(extra="forbid")
+    log: Path | None = None  # the JSON lines file written by honeycomb-egress
+    # Source address of a request, as the proxy saw it, to the agent id that owns it. The proxy
+    # can't tell runs apart, so a honeytoken hit pauses every active run of that agent. An
+    # address that is not listed here pauses every run.
+    sources: dict[str, str] = Field(default_factory=dict)
+    poll_s: float = Field(default=0.5, ge=0.05, le=60)
+
+    @field_validator("sources")
+    @classmethod
+    def _addresses(cls, value: dict[str, str]) -> dict[str, str]:
+        for address in value:
+            ipaddress.ip_address(address)  # raises ValueError for anything else
+        return value
+
+
 class GateConfig(PolicyConfig):
     schema_version: Literal[1] = 1
     agent_id: str = "default"
@@ -71,6 +98,7 @@ class GateConfig(PolicyConfig):
     agents: dict[str, AgentConfig] = Field(default_factory=dict)
     http: HttpConfig = Field(default_factory=HttpConfig)
     deployment: DeploymentConfig = Field(default_factory=DeploymentConfig)
+    egress: EgressConfig = Field(default_factory=EgressConfig)
 
     @model_validator(mode="after")
     def _cross_checks(self) -> "GateConfig":
@@ -108,6 +136,10 @@ class GateConfig(PolicyConfig):
     @property
     def keys_path(self) -> Path:
         return self.state_dir / "identity-keys.json"
+
+    @property
+    def egress_offset_path(self) -> Path:
+        return self.state_dir / "egress-offset.json"
 
     @property
     def egress_proof_path(self) -> Path:

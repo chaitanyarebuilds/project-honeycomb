@@ -113,3 +113,17 @@ def test_masking_ignores_case_too(tmp_path: Path) -> None:
     reg = registry(tmp_path)
     t = reg.create("api-key")
     assert t.value.upper() not in str(reg.mask({"a": t.value.upper()}))
+
+
+def test_a_read_only_registry_reads_without_touching_the_folder(tmp_path: Path) -> None:
+    import os
+
+    writer = TokenRegistry(tmp_path / "tokens.json")
+    token = writer.create("api-key")
+    (tmp_path / "tokens.json.lock").unlink()
+    os.chmod(tmp_path, 0o500)  # nothing can be created here, as on a read-only mount
+    try:
+        seen = TokenRegistry(tmp_path / "tokens.json", read_only=True).find({"x": token.value})
+    finally:
+        os.chmod(tmp_path, 0o700)
+    assert [s.token_id for s in seen] == [token.id]

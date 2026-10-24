@@ -74,7 +74,7 @@ def write_config(workdir: Path, *, tarpit_delay_s: float = 0.2, email: bool = Tr
 
 def make_docs(workdir: Path) -> Path:
     docs = workdir / "docs"
-    docs.mkdir(exist_ok=True)
+    docs.mkdir(parents=True, exist_ok=True)
     (docs / "q3-report.txt").write_text(POISONED, encoding="utf-8")
     (docs / "notes.txt").write_text(BENIGN, encoding="utf-8")
     return docs

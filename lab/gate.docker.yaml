@@ -1,0 +1,30 @@
+# The gate as the lab runs it. Learning mode keeps first-time tool pinning automatic.
+schema_version: 1
+agent_id: lab-gate
+mode: learning
+state_dir: /state
+alert_sink: /state/sink.jsonl
+upstreams:
+  crm:
+    command: ["python", "/app/lab/targets/crm.py"]
+    env: { HC_LAB_MARKER: /state/real_exports.log }
+  docs:
+    command: ["python", "/app/lab/targets/docs.py"]
+    env: { HC_LAB_DOCS: /data/docs }
+agents:
+  support-bot: { scopes: ["*"] }
+decoys:
+  count: 1
+  vocabulary: [export_all_customer_data]
+  placement: crm
+  on_trip: { response: tarpit, tarpit_delay_s: 0.2 }
+notify: { email: false }
+http:
+  host: 0.0.0.0
+  port: 8765
+  allowed_hosts: ["gate:8765"]
+egress:
+  log: /egress/egress.jsonl
+  sources: { 172.30.0.10: support-bot }
+deployment:
+  network_enforced: true

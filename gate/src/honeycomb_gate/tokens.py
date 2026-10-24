@@ -85,8 +85,13 @@ def _unescaped(text: str) -> Iterator[str]:
 class TokenRegistry:
     """Registered honeytokens, shared between the CLI and the running gate."""
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, *, read_only: bool = False) -> None:
+        """``read_only`` is for a reader that can't write next to the file (a read-only mount).
+
+        Writers replace the file atomically, so a reader never sees half of it and needs no lock.
+        """
         self.path = path
+        self._read_only = read_only
         self._lock = FileLock(path.with_name(path.name + ".lock"))
         self._cache: list[Token] = []
         self._mtime: int | None = None
@@ -106,8 +111,11 @@ class TokenRegistry:
             return []
         mtime = self.path.stat().st_mtime_ns
         if mtime != self._mtime:
-            with self._lock:
+            if self._read_only:
                 self._cache = self._read()
+            else:
+                with self._lock:
+                    self._cache = self._read()
             self._mtime = mtime
         return self._cache
 

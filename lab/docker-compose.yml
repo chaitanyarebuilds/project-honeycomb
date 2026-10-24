@@ -1,0 +1,75 @@
+# The lab: the agent sits on labnet, which has no route out. Its only exits are the gate and the
+# egress proxy. "outside" stands in for the internet, with a sink that plays the attacker's
+# server and a partner API that is on the allowlist.
+name: honeycomb-lab
+
+networks:
+  labnet:
+    internal: true
+    ipam: { config: [{ subnet: 172.30.0.0/24 }] }
+  outside:
+    ipam: { config: [{ subnet: 172.31.0.0/24 }] }
+
+volumes:
+  state:
+  egresslog:
+  workspace:
+
+x-lab: &lab
+  image: honeycomb-lab
+  build: { context: .., dockerfile: lab/Dockerfile }
+
+services:
+  gate:
+    <<: *lab
+    command: honeycomb-gate serve --config /lab/gate.yaml
+    environment:
+      # The lab's signing key is passed by environment, so it never lands in the state volume that
+      # the egress proxy mounts. It is a fixed lab value, not a secret.
+      HONEYCOMB_RUN_KEY: lab-only-signing-key-0123456789abcdef0123456789abcdef
+    volumes:
+      - ./gate.docker.yaml:/lab/gate.yaml:ro
+      - state:/state
+      - egresslog:/egress:ro
+      - workspace:/workspace
+    networks:
+      labnet: { ipv4_address: 172.30.0.2 }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8765), 2)"]
+      interval: 2s
+      retries: 30
+
+  egress:
+    <<: *lab
+    command: >
+      honeycomb-egress --listen 0.0.0.0:3128 --allow partner-api:8080
+      --log /egress/egress.jsonl --tokens /state/tokens.json
+    volumes:
+      - egresslog:/egress
+      - state:/state:ro
+    networks:
+      labnet: { ipv4_address: 172.30.0.3 }
+      outside: { ipv4_address: 172.31.0.3 }
+
+  sink:
+    <<: *lab
+    command: python -m lab.sink --name sink --port 8080
+    networks:
+      outside: { ipv4_address: 172.31.0.20 }
+
+  partner-api:
+    <<: *lab
+    command: python -m lab.sink --name partner-api --port 8080
+    networks:
+      outside: { ipv4_address: 172.31.0.21 }
+
+  agent:
+    <<: *lab
+    command: sleep infinity
+    environment:
+      HTTP_PROXY: http://egress:3128
+      NO_PROXY: gate,localhost,127.0.0.1  # the gate is reached directly; everything else goes out through the proxy
+    volumes:
+      - workspace:/workspace
+    networks:
+      labnet: { ipv4_address: 172.30.0.10 }

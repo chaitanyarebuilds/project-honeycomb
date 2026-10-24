@@ -9,6 +9,7 @@ dependencies = ["mcp>=2.3,<3", "pydantic>=2", "typer>=0.12", "PyYAML>=6", "httpx
 
 [project.scripts]
 honeycomb-gate = "honeycomb_gate.cli:app"
+honeycomb-egress = "honeycomb_gate.egress:main"
 
 [dependency-groups]
 dev = ["pytest", "pytest-asyncio", "ruff", "mypy", "types-PyYAML"]

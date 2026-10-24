@@ -145,6 +145,8 @@ flowchart LR
 
 - Reference setup: the agent container sits on an internal Docker network with no default route. Its only way out is an egress proxy with an allowlist.
 - Proxy logs feed the event log, and egress is scanned for honeytokens.
+- `honeycomb-egress` (standard library only, no signing key) allows only listed `host:port` pairs, for plain HTTP and for CONNECT. For plain HTTP it also scans the URL, headers and the first megabyte of the body for honeytokens. For HTTPS it sees only the host and port, so a token sent over HTTPS to an allowed host goes through unseen. Chunked uploads and bodies over a megabyte are refused. It writes one JSON line per request: source address, destination, verdict, reason, and the id of a honeytoken if one was found (never its value).
+- The gate reads that file as untrusted data (`egress.log` in the config), remembering how far it has read. A blocked request becomes `egress.blocked` (a flood is summarised). A line with a honeytoken id trips every active run of the agent that owns the source address (`egress.sources`), or every run if the address is not listed, because the proxy can't tell runs apart. The events say `attribution: agent-wide`.
 - Hosts that can't run containers get documented firewall guidance only.
 
 **F9. Behaviour baselines.**
@@ -225,6 +227,7 @@ Event kinds. The approval, egress, baseline and memory kinds arrive in M3 to M5 
 - `tools.listed`, `tool.pinned`, `tool.definition_changed`, `tool.unapproved`, `tool.approved`, `tool.suspicious_description`
 - `call.allowed`, `call.completed`, `call.denied`, `call.approval_requested`, `call.approved`, `call.approval_denied`, `call.approval_timeout`
 - `decoy.tripped`, `decoy.collision`, `honeytoken.used`, `egress.blocked`
+- `egress.malformed`
 - `incident.opened`, `incident.notified`, `incident.deduplicated`, `notify.failed`
 - `identity.issued`, `identity.revoked`, `identity.rejected`, `session.resumed`, `agent.unknown`
 - `baseline.deviation`
@@ -239,6 +242,7 @@ These can also be configured:
 - `agents.<id>.scopes`: tool globs (`upstream__tool`) a run for that agent may use. Default `["*"]`.
 - `http`: `host` (default `127.0.0.1`), `port` (8765), `allowed_hosts` (extra Host header values for a container or reverse proxy, matched exactly including the port, so `gate:8765` or `gate:*`) and `max_body_bytes`.
 - `deployment.network_enforced`: what the operator declares about the network. `honeycomb-gate posture` reports it as declared until a lab test writes the proof file.
+- `egress`: `log` (the proxy's JSON lines file), `sources` (source address to agent id) and `poll_s`.
 - `decoys`: `count`, `vocabulary`, `placement`, `on_trip.response`, `on_trip.tarpit_delay_s`.
 - `notify`: `email`, `webhook_url`, `dedupe_window_s`.
 - `agent_id`, `state_dir` and `event_log`.
@@ -358,8 +362,8 @@ All services sit on an `internal: true` network.
 
 - [x] Resources and prompts through the gate (F1), with logging and the honeytoken scan
 - [x] Run identity and revocation (F7): per-run state, HTTP front door, signed run tokens, scopes, agent inventory and the `posture` report (M3a)
-- [ ] Lab egress proxy and log ingestion (F8)
-- [ ] S3 passes fully
+- [x] Lab egress proxy and log ingestion (F8): `honeycomb-egress`, the Docker lab on an internal network (M3b)
+- [x] S3 passes fully, in the Docker lab (`uv run python -m lab.run_lab`)
 
 **M4: governors and baselines (weeks 7–8)**
 
