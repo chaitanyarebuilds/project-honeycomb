@@ -322,7 +322,7 @@ The full version goes in `docs/THREAT-MODEL.md`, which is part of M1.
 - `egress`: an allowlisting proxy.
 - `agent`: runs in two modes:
   - a scripted attacker client, deterministic and needing no LLM, used in CI;
-  - an optional real-LLM agent, used with an API key from `.env`.
+  - an optional real-LLM agent, used with an API key from `.env` (`lab-run --agent llm`, scenarios L1 and L2). It is never run in CI.
 
 All services sit on an `internal: true` network.
 

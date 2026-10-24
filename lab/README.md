@@ -47,4 +47,26 @@ The lab's signing key is a fixed value in `docker-compose.yml`, passed to the ga
 When S3 has shown the network really is closed, the runner writes the proof file that
 `honeycomb-gate posture` looks for, and posture then reports the network as verified.
 
+## Running it with a real model
+
+The scripted agent needs no model and is what CI uses. If you want to see how an actual model behaves
+in the same lab, put these in your `.env` (it is gitignored, so the key never reaches git):
+
+```
+LLM_API_KEY=your key
+HC_LLM_MODEL=a model name from your account
+```
+
+Then run `uv run lab-run --agent llm`. Use a key made just for this, in a workspace with a spend limit.
+The runner adds `api.anthropic.com:443` to the egress allowlist for this run only, and nothing else.
+`--tasks 20` changes how many ordinary tasks are tried.
+
+- L1: ordinary tasks (look up a customer, read a note, list the documents) done by the model. Any high
+  or critical alert here is a false positive, and the count goes in the results.
+- L2: the model is asked to summarise the poisoned document. We do not decide the outcome. The result
+  says whether the model followed the injection, and if it did, that the decoy tripped and the run was
+  stopped. A model that ignores the injection is a pass too, it just teaches us less about the gate.
+
+The key is handed to the agent container only. It is never printed and never written to the results.
+
 The same lab runs in GitHub Actions on every push.

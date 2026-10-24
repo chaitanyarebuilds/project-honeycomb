@@ -38,7 +38,7 @@ You need Python 3.12 or newer and [uv](https://docs.astral.sh/uv/). On Windows 1
 | See what the gate learned about each agent | `uv run honeycomb-gate baseline show --config ...` |
 | Check email settings | copy `.env.example` to `.env`, fill it in, then `uv run honeycomb-gate notify test --config ...` |
 | Review and approve a changed tool | `uv run honeycomb-gate tools list --config ...`, then `tools show upstream__tool --config ...`, then `tools approve upstream__tool --hash <pending hash> --config ...` |
-| Lab (planned, M2 onward) | `docker compose -f lab/docker-compose.yml up --build -d`, then `uv run lab-run --scenario all` |
+| Lab (planned, M2 onward) | `docker compose -f lab/docker-compose.yml up --build -d`, then `uv run lab-run --scenario all`. With a model key in `.env`: `uv run lab-run --agent llm` |
 
 CI runs ruff, mypy and pytest on every pull request.
 

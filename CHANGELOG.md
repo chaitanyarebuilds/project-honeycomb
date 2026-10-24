@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+An optional lab agent driven by a real model: `uv run lab-run --agent llm`. It does ordinary tasks
+(L1) and reads the poisoned document (L2), and records false positives and whether the model followed
+the injection. It needs your own key in `.env` and is never run in CI.
+
 ## 0.1.0, October 2026
 
 The first public build of the Phase 0 gate. It sits between an AI agent and its tools (MCP) and

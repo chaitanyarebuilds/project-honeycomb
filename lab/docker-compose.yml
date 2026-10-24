@@ -42,7 +42,7 @@ services:
   egress:
     <<: *lab
     command: >
-      honeycomb-egress --listen 0.0.0.0:3128 --allow partner-api:8080
+      honeycomb-egress --listen 0.0.0.0:3128 --allow partner-api:8080 ${HC_EXTRA_ALLOW:-}
       --log /egress/egress.jsonl --tokens /state/tokens.json
     volumes:
       - egresslog:/egress
@@ -68,6 +68,10 @@ services:
     command: sleep infinity
     environment:
       HTTP_PROXY: http://egress:3128
+      # Only used by `lab-run --agent llm`. They come from your shell or .env, never from this file.
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      HC_LLM_MODEL: ${HC_LLM_MODEL:-}
+      HC_LLM_BASE_URL: ${HC_LLM_BASE_URL:-}
       NO_PROXY: gate,localhost,127.0.0.1  # the gate is reached directly; everything else goes out through the proxy
     volumes:
       - workspace:/workspace

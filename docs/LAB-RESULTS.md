@@ -60,5 +60,6 @@ All 39 checks passed. The six scenarios from the spec:
 ## What we would do next
 
 Run the same scenarios with real agents driven by a model, over days, and publish the false positive
-count alongside the detections. Add scenarios for the cases we know we miss. Let outside
+count alongside the detections. The runner for this exists (`uv run lab-run --agent llm`, scenarios L1
+and L2), but we have no real-model results yet. We will add them once someone has run it. Add scenarios for the cases we know we miss. Let outside
 developers try to break it, and record what they find.
