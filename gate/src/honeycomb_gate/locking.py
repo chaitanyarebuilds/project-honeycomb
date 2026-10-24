@@ -40,6 +40,26 @@ def write_json_atomic(path: Path, data: object, **dump_kwargs: Any) -> None:
     os.replace(tmp, path)
 
 
+class JsonStore:
+    """A JSON object kept in a file, with a lock next to it. Most state files have this shape.
+
+    Reads and writes go through ``_read`` and ``_write``; callers take ``self._lock`` around a
+    read-then-write. Writes replace the file atomically, so a reader never sees half of one.
+    """
+
+    sort_keys = False
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self._lock = lock_for(path)
+
+    def _read(self) -> dict[str, Any]:
+        return read_json(self.path, {})
+
+    def _write(self, data: dict[str, Any]) -> None:
+        write_json_atomic(self.path, data, indent=2, sort_keys=self.sort_keys)
+
+
 class LockedError(RuntimeError):
     """Another process holds the lock."""
 
@@ -95,3 +115,8 @@ class FileLock:
         tb: TracebackType | None,
     ) -> None:
         self.release()
+
+
+def lock_for(path: Path) -> FileLock:
+    """The lock that goes with a state file: the same name with ``.lock`` added."""
+    return FileLock(path.with_name(path.name + ".lock"))

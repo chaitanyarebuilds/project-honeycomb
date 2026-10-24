@@ -1,6 +1,5 @@
 """The HTTP front door end to end: a real gate process, real tokens, several runs at once."""
 
-import json
 import signal
 import socket
 import subprocess
@@ -18,9 +17,8 @@ from lab.scenarios.s1_poisoned_doc import write_config as write_lab_config
 from mcp import Client, MCPError
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared._httpx_utils import create_mcp_http_client
-from typer.testing import CliRunner
 
-from honeycomb_gate.cli import app
+from helpers import cli, read_log
 
 AGENTS = {
     "support-bot": {"scopes": ["*"]},
@@ -40,11 +38,6 @@ def make_config(tmp_path: Path, port: int, **extra: Any) -> Path:
     cfg.update({"agents": AGENTS, "http": {"port": port}, **extra})
     path.write_text(yaml.safe_dump(cfg))
     return path
-
-
-def cli(*args: str) -> tuple[int, str, str]:
-    result = CliRunner().invoke(app, list(args))
-    return result.exit_code, result.stdout.strip(), result.stderr
 
 
 def token_for(cfg: Path, agent: str) -> str:
@@ -81,14 +74,11 @@ def running(cfg: Path, port: int) -> Iterator[None]:
             proc.stderr.close()
 
 
-def agent(port: int, token: str) -> Client:
+def agent(port: int, token: str, mode: Any = "auto") -> Client:
     http = create_mcp_http_client(headers={"Authorization": f"Bearer {token}"})
-    return Client(streamable_http_client(f"http://127.0.0.1:{port}/mcp", http_client=http))
-
-
-def events(tmp_path: Path) -> list[dict[str, Any]]:
-    lines = (tmp_path / "state" / "events.jsonl").read_text().splitlines()
-    return [json.loads(line) for line in lines]
+    return Client(
+        streamable_http_client(f"http://127.0.0.1:{port}/mcp", http_client=http), mode=mode
+    )
 
 
 def status(port: int, token: str | None, **headers: str) -> int:
@@ -112,10 +102,10 @@ async def test_a_run_with_a_token_gets_its_tools_and_is_logged_under_its_own_id(
             assert {"crm__search_customers", "docs__read_document"} <= names
             out = await a.call_tool("docs__read_document", {"name": "notes.txt"})
             assert "Stand-up" in str(out.content[0].text)  # type: ignore[union-attr]
-    started = [e for e in events(tmp_path) if e.get("details", {}).get("front_door") == "http"]
+    started = [e for e in read_log(tmp_path) if e.get("details", {}).get("front_door") == "http"]
     assert len(started) == 1 and started[0]["agent_id"] == "support-bot"
     run_id = started[0]["run_id"]
-    calls = [e for e in events(tmp_path) if e["kind"] == "call.allowed"]
+    calls = [e for e in read_log(tmp_path) if e["kind"] == "call.allowed"]
     assert calls and {e["run_id"] for e in calls} == {run_id}
     code, out, _ = cli("agents", "list", "--config", str(cfg))
     assert "support-bot  registered  runs 1" in out and "docs-reader  registered  runs 0" in out
@@ -133,7 +123,7 @@ async def test_requests_without_a_good_token_never_reach_the_gate(tmp_path: Path
         assert status(port, "hc1.nonsense.token") == 401
         assert status(port, tampered) == 401
         assert status(port, good, Authorization="Basic abc") == 401
-    rejected = [e for e in events(tmp_path) if e["kind"] == "identity.rejected"]
+    rejected = [e for e in read_log(tmp_path) if e["kind"] == "identity.rejected"]
     assert len(rejected) == 1  # the rest fell inside one logging window
     assert good not in (tmp_path / "state" / "events.jsonl").read_text()
 
@@ -179,7 +169,7 @@ async def test_a_decoy_trip_revokes_only_that_runs_token_and_resume_issues_a_new
             assert status(port, bystander) == 200  # untouched
             ok = await b.call_tool("crm__search_customers", {"query": "an"})
             assert not ok.is_error
-        trip = next(e for e in events(tmp_path) if e["kind"] == "decoy.tripped")
+        trip = next(e for e in read_log(tmp_path) if e["kind"] == "decoy.tripped")
         code, out, _ = cli("runs", "list", "--config", str(cfg))
         assert trip["run_id"] in out
         code, fresh, err = cli("runs", "resume", trip["run_id"], "--config", str(cfg))
@@ -187,7 +177,7 @@ async def test_a_decoy_trip_revokes_only_that_runs_token_and_resume_issues_a_new
         assert status(port, fresh) == 200 and status(port, hijacked) == 401
         async with agent(port, fresh) as c:
             await c.list_tools()
-    log = events(tmp_path)
+    log = read_log(tmp_path)
     resumed = [e for e in log if e["kind"] == "session.resumed"]
     assert resumed and resumed[0]["details"]["previous_run_id"] == trip["run_id"]
     assert resumed[0]["run_id"] != trip["run_id"]
@@ -206,9 +196,9 @@ async def test_scopes_limit_what_a_run_can_see_and_call(tmp_path: Path) -> None:
             assert out.is_error
             assert (await a.call_tool("docs__list_documents", {})).is_error is False
             assert len((await a.list_resources()).resources) == 1
-    denied = [e for e in events(tmp_path) if e["kind"] == "call.denied"]
+    denied = [e for e in read_log(tmp_path) if e["kind"] == "call.denied"]
     assert denied[0]["details"]["reason"] == "out_of_scope"
-    assert not [e for e in events(tmp_path) if e["kind"] == "call.allowed"
+    assert not [e for e in read_log(tmp_path) if e["kind"] == "call.allowed"
                 and e["tool"] == "crm__search_customers"]  # fmt: skip
 
 
@@ -244,7 +234,7 @@ async def test_an_unknown_agent_is_accepted_but_logged_in_learning_mode(tmp_path
     with running(cfg, port):
         async with agent(port, token) as a:
             await a.list_tools()
-    unknown = [e for e in events(tmp_path) if e["kind"] == "agent.unknown"]
+    unknown = [e for e in read_log(tmp_path) if e["kind"] == "agent.unknown"]
     assert unknown and unknown[0]["agent_id"] == "new-hire-bot"
     assert "UNREGISTERED" in cli("agents", "list", "--config", str(cfg))[1]
 
@@ -285,7 +275,7 @@ async def test_starting_a_stdio_gate_leaves_a_token_runs_pause_alone(tmp_path: P
         async with agent(port, hijacked) as a:
             decoy = next(t.name for t in (await a.list_tools()).tools if "export_all" in t.name)
             await a.call_tool(decoy, {})
-    trip = next(e for e in events(tmp_path) if e["kind"] == "decoy.tripped")
+    trip = next(e for e in read_log(tmp_path) if e["kind"] == "decoy.tripped")
     async with Client(gate_params(cfg)) as stdio_agent:  # a stdio start in the same state folder
         await stdio_agent.list_tools()
     code, _, err = cli("runs", "resume", trip["run_id"], "--config", str(cfg))

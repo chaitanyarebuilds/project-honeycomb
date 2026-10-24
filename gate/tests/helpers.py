@@ -5,6 +5,9 @@ from typing import Any
 
 import yaml
 from mcp.client.stdio import StdioServerParameters
+from typer.testing import CliRunner
+
+from honeycomb_gate.cli import app
 
 SAMPLE = str(Path(__file__).parent / "sample_server.py")
 
@@ -30,3 +33,8 @@ def gate_params(cfg: Path) -> StdioServerParameters:
 def read_log(tmp_path: Path) -> list[dict[str, Any]]:
     path = tmp_path / "state" / "events.jsonl"
     return [json.loads(line) for line in path.read_text().splitlines()]
+
+
+def cli(*args: str) -> tuple[int, str, str]:
+    result = CliRunner().invoke(app, list(args))
+    return result.exit_code, result.stdout.strip(), result.stderr

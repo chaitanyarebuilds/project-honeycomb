@@ -33,7 +33,12 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from honeycomb_gate.events import ulid_like
-from honeycomb_gate.locking import FileLock, StateCorruptError, read_json, write_json_atomic
+from honeycomb_gate.locking import (
+    StateCorruptError,
+    lock_for,
+    read_json,
+    write_json_atomic,
+)
 from honeycomb_gate.redact import redact_string
 from honeycomb_gate.registry import scan_description
 
@@ -136,7 +141,7 @@ class Memory:
     def __init__(self, path: Path, config: MemoryConfig) -> None:
         self.path = path
         self.config = config
-        self._lock = FileLock(path.with_name(path.name + ".lock"))
+        self._lock = lock_for(path)
         self._cache: list[Rule] = []
         self._mtime: int | None = None
         self.rules()  # a damaged file stops the start, as every other state file does

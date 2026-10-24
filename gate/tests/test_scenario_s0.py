@@ -11,8 +11,8 @@ from pathlib import Path
 
 from mcp import Client
 
-from helpers import read_log
-from test_front_door import agent, cli, free_port, make_config, running, token_for
+from helpers import cli, read_log
+from test_front_door import agent, free_port, make_config, running, token_for
 
 SESSIONS = 50
 NAMES = [

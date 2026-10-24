@@ -1,0 +1,23 @@
+name: Critique the design
+description: Something in the design, the plan or the threat model is wrong or missing.
+title: "critique: "
+labels: ["critique"]
+body:
+  - type: textarea
+    id: where
+    attributes:
+      label: Which part?
+      description: A document and a section, or a feature, for example "THREAT-MODEL T45" or "F10 approvals".
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is wrong or missing?
+    validations:
+      required: true
+  - type: textarea
+    id: better
+    attributes:
+      label: What would you do instead?
+      description: Optional, but a pointer to a paper or a project helps a lot.

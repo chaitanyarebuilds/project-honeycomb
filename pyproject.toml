@@ -1,6 +1,6 @@
 [project]
 name = "honeycomb-gate"
-version = "0.0.1"
+version = "0.1.0"
 description = "honeycomb-gate: an immune system for AI agents (Phase 0 of Project Honeycomb)"
 readme = "README.md"
 requires-python = ">=3.12"

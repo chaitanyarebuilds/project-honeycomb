@@ -29,7 +29,7 @@ from pydantic import BaseModel
 from honeycomb_gate import __version__
 from honeycomb_gate.baseline import Baselines
 from honeycomb_gate.config import GateConfig
-from honeycomb_gate.decoys import DecoyBook, tarpit_delay, tarpit_text
+from honeycomb_gate.decoys import DecoyBook, call_fingerprint, tarpit_delay, tarpit_text
 from honeycomb_gate.events import (
     EventLog,
     LogCorruptError,
@@ -49,7 +49,7 @@ from honeycomb_gate.incidents import (
     open_memory_incident,
     open_token_incident,
 )
-from honeycomb_gate.locking import FileLock, LockedError, StateCorruptError
+from honeycomb_gate.locking import LockedError, StateCorruptError, lock_for
 from honeycomb_gate.memory import MAX_REMEMBERED, Memory, Rule
 from honeycomb_gate.notify import Notifier
 from honeycomb_gate.policy import PolicyEngine
@@ -65,6 +65,11 @@ MAX_ARGS_CHARS = 4_000_000  # larger calls are refused, so no scan can be padded
 MAX_RESULT_CHARS = 8_000_000  # the same for what comes back
 MAX_DEPTH = 100  # nesting deeper than any real tool call
 RESOURCE_SCHEME = "hc"  # resources come out as hc://<upstream>/<escaped original uri>
+
+
+def _too_big(payload: Any) -> bool:
+    """Is a result larger than we are willing to scan? Such a result is refused unseen."""
+    return len(json.dumps(payload, default=str)) > MAX_RESULT_CHARS
 
 
 def _blocked(message: str) -> types.CallToolResult:
@@ -285,12 +290,7 @@ class Gate:
 
     def _tarpit_credential(self, tool: str, args: dict[str, Any] | None) -> str:
         """A stable fake credential for credential-like decoys, itself a registered honeytoken."""
-        key = (
-            "tarpit:"
-            + hashlib.sha256(
-                f"{tool}|{json.dumps(args or {}, sort_keys=True, default=str)}".encode()
-            ).hexdigest()[:16]
-        )
+        key = "tarpit:" + hashlib.sha256(call_fingerprint(tool, args)).hexdigest()[:16]
         for t in self.tokens.tokens():
             if key in t.placed and not t.revoked:
                 return t.value
@@ -417,7 +417,7 @@ class Gate:
     def _inspect_result(self, result: BaseModel) -> tuple[bool, list[Sighting], Rule | None]:
         """Size check, honeytoken scan and learned-rule check of a result (in a worker thread)."""
         payload = result.model_dump(by_alias=True, exclude_none=True)
-        if len(json.dumps(payload, default=str)) > MAX_RESULT_CHARS:
+        if _too_big(payload):
             return True, [], None
         found = self.tokens.find(payload)
         rule = None if found else self.memory.match(strings_of(payload, keys=False))
@@ -600,7 +600,7 @@ class Gate:
         self, run: Run, label: str, payload: Any, where: str, base: dict[str, Any]
     ) -> None:
         """Scan something an agent sent or an upstream returned. A planted secret trips the run."""
-        too_big = len(json.dumps(payload, default=str)) > MAX_RESULT_CHARS
+        too_big = _too_big(payload)
         found = [] if too_big else await asyncio.to_thread(self.tokens.find, payload)
         rule = None
         if where == "result" and not too_big and not found:
@@ -898,7 +898,7 @@ class Gate:
 def check_state(config: GateConfig) -> None:
     """Refuse to start on evidence of tampering or lost state, instead of quietly starting fresh."""
     log = config.event_log_path
-    lock = FileLock(log.with_name(log.name + ".lock"))
+    lock = lock_for(log)
     try:  # another gate writing right now would make a half-written line look like damage
         lock.acquire(blocking=False)
     except LockedError as exc:

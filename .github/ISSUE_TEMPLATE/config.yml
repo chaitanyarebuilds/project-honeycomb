@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: A security problem you want to report privately
+    url: https://github.com/chaitanyarebuilds/project-honeycomb/security/policy
+    about: Please do not open a public issue for a flaw that could be abused. SECURITY.md says how to reach us.
+  - name: A question or an idea
+    url: https://github.com/chaitanyarebuilds/project-honeycomb/discussions
+    about: Discussions are the place for questions, ideas and introductions.

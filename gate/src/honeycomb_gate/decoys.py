@@ -111,6 +111,11 @@ def _describe(name: str, wording: int = 0) -> tuple[str, dict[str, Any]]:
     return (f"Internal maintenance tool: {name.replace('_', ' ')}.", _OBJ)
 
 
+def call_fingerprint(tool: str, args: dict[str, Any] | None) -> bytes:
+    """The same call always gives the same bytes: what seeds a tarpit answer or a fake key."""
+    return f"{tool}|{json.dumps(args or {}, sort_keys=True, default=str)}".encode()
+
+
 class DecoyBook:
     """The decoys chosen for this deployment."""
 
@@ -167,8 +172,7 @@ class DecoyBook:
         return out, skipped
 
     def rng(self, tool: str, args: dict[str, Any] | None) -> random.Random:
-        material = f"{tool}|{json.dumps(args or {}, sort_keys=True, default=str)}".encode()
-        digest = hmac.new(self._seed_bytes, material, hashlib.sha256).digest()
+        digest = hmac.new(self._seed_bytes, call_fingerprint(tool, args), hashlib.sha256).digest()
         return random.Random(int.from_bytes(digest[:8]))
 
 

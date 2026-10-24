@@ -1,0 +1,46 @@
+name: Break it
+description: You got something past the gate, or made it fail. Tell us how.
+title: "break it: "
+labels: ["break-it"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is what we want most. The gate is a security tool, so a bypass is a bug, and a clear
+        report is worth more than a patch. Please read the "known gaps" in
+        [docs/THREAT-MODEL.md](../blob/chaitanyarebuilds/docs/THREAT-MODEL.md) first, because some
+        things (HTTPS to an allowed host, a reworded attack the first time) are known.
+        If the flaw could be used against someone running the gate today, use the private route in
+        SECURITY.md instead of this form.
+  - type: textarea
+    id: what
+    attributes:
+      label: What did you get past, or break?
+      description: One or two plain sentences.
+    validations:
+      required: true
+  - type: textarea
+    id: how
+    attributes:
+      label: How do we repeat it?
+      description: Commands or a short script. Lab targets only, synthetic data only.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect, and what happened?
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: v0.1.0, or a commit hash
+  - type: checkboxes
+    id: rules
+    attributes:
+      label: Before you send
+      options:
+        - label: I only tried this on systems I own, with made-up data.
+          required: true

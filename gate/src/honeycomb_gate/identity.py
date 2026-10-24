@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from honeycomb_gate.events import new_run_id
-from honeycomb_gate.locking import FileLock, read_json, write_json_atomic
+from honeycomb_gate.locking import JsonStore
 
 PREFIX = "hc1"
 MAX_TTL_S = 900  # the spec says 15 minutes or less
@@ -53,23 +53,16 @@ def _unb64(text: str) -> bytes:
     return raw
 
 
-class KeyRing:
+class KeyRing(JsonStore):
     """Signing keys: the ``HONEYCOMB_RUN_KEY`` variable, or a private file in the state folder.
 
     Rotating adds a new current key and keeps the old ones, so tokens signed a moment ago still
     verify. ``prune`` drops keys that no live token can have been signed with.
     """
 
-    def __init__(self, path: Path) -> None:
-        self.path = path
-        self._lock = FileLock(path.with_name(path.name + ".lock"))
-
-    def _load(self) -> dict[str, Any]:
-        return read_json(self.path, {})
-
-    def _save(self, data: dict[str, Any]) -> None:
-        write_json_atomic(self.path, data, indent=2)
-        os.chmod(self.path, 0o600)
+    def _write(self, data: dict[str, Any]) -> None:
+        super()._write(data)
+        os.chmod(self.path, 0o600)  # the signing keys are for the operator and the gate only
 
     def current(self) -> tuple[str, bytes]:
         env = os.environ.get(KEY_ENV, "")
@@ -78,10 +71,10 @@ class KeyRing:
                 raise TokenError(f"{KEY_ENV} must be at least 32 characters")
             return "env", env.encode()
         with self._lock:
-            data = self._load()
+            data = self._read()
             if not data.get("current"):
                 data = self._new_key(data)
-                self._save(data)
+                self._write(data)
         return data["current"], bytes.fromhex(data["keys"][data["current"]]["key"])
 
     def _new_key(self, data: dict[str, Any]) -> dict[str, Any]:
@@ -97,39 +90,35 @@ class KeyRing:
         if kid == "env":
             env = os.environ.get(KEY_ENV, "")
             return env.encode() if len(env) >= 32 else None
-        entry = self._load().get("keys", {}).get(kid)
+        entry = self._read().get("keys", {}).get(kid)
         return bytes.fromhex(entry["key"]) if entry else None
 
     def rotate(self) -> str:
         with self._lock:
-            data = self._new_key(self._load())
-            self._save(data)
+            data = self._new_key(self._read())
+            self._write(data)
         return str(data["current"])
 
     def prune(self) -> list[str]:
         """Forget keys older than the longest a token can live, except the current one."""
         with self._lock:
-            data = self._load()
+            data = self._read()
             cutoff = time.time() - 2 * MAX_TTL_S
             gone = [k for k, v in data.get("keys", {}).items()
                     if k != data.get("current") and v["created"] < cutoff]  # fmt: skip
             for k in gone:
                 del data["keys"][k]
             if gone:
-                self._save(data)
+                self._write(data)
         return gone
 
 
-class Identities:
+class Identities(JsonStore):
     """Who holds a live identity. The gate reads this on every request, the CLI changes it."""
 
     def __init__(self, path: Path, keys: KeyRing) -> None:
-        self.path = path
+        super().__init__(path)
         self.keys = keys
-        self._lock = FileLock(path.with_name(path.name + ".lock"))
-
-    def _read(self) -> dict[str, dict[str, Any]]:
-        return read_json(self.path, {})
 
     def get(self, run_id: str) -> dict[str, Any] | None:
         return self._read().get(run_id)
@@ -163,7 +152,7 @@ class Identities:
             data[run_id] = {"agent": agent_id, "scopes": scopes, "status": "active",
                             "issued": now, "expires": now + ttl,
                             "resumed_from": resumed_from}  # fmt: skip
-            write_json_atomic(self.path, data, indent=2)
+            self._write(data)
         return run_id, self._token(run_id, agent_id, scopes, now, ttl)
 
     def renew(self, run_id: str, ttl_s: int = MAX_TTL_S, scopes: list[str] | None = None) -> str:
@@ -181,7 +170,7 @@ class Identities:
             entry["expires"] = now + ttl
             if scopes is not None:
                 entry["scopes"] = scopes
-            write_json_atomic(self.path, data, indent=2)
+            self._write(data)
         return self._token(run_id, entry["agent"], entry["scopes"], now, ttl)
 
     def revoke(self, run_id: str, reason: str) -> bool:
@@ -191,7 +180,7 @@ class Identities:
             if entry is None or entry["status"] != "active":
                 return False
             entry.update(status="revoked", reason=reason, revoked_at=int(time.time()))
-            write_json_atomic(self.path, data, indent=2)
+            self._write(data)
         return True
 
     @staticmethod
@@ -235,15 +224,11 @@ class Identities:
         return out
 
 
-class Inventory:
+class Inventory(JsonStore):
     """Every agent id the gate has seen, with first and last sighting and how many runs."""
 
-    def __init__(self, path: Path) -> None:
-        self.path = path
-        self._lock = FileLock(path.with_name(path.name + ".lock"))
-
     def all(self) -> dict[str, dict[str, Any]]:
-        return read_json(self.path, {})
+        return self._read()
 
     def note_run(self, agent_id: str) -> bool:
         """Record a new run for this agent. Returns True the first time we ever see the agent."""
@@ -253,5 +238,5 @@ class Inventory:
             first = agent_id not in data
             entry = data.get(agent_id, {"first_seen": now, "runs": 0})
             data[agent_id] = {**entry, "last_seen": now, "runs": entry["runs"] + 1}
-            write_json_atomic(self.path, data, indent=2)
+            self._write(data)
         return first

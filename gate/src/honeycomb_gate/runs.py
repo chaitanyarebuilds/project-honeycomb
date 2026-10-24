@@ -7,27 +7,16 @@ revoked for good.
 
 from collections.abc import Iterable
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
-from honeycomb_gate.locking import FileLock, read_json, write_json_atomic
+from honeycomb_gate.locking import JsonStore
 
 
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
-class RunControl:
-    def __init__(self, path: Path) -> None:
-        self.path = path
-        self._lock = FileLock(path.with_name(path.name + ".lock"))
-
-    def _read(self) -> dict[str, dict[str, Any]]:
-        return read_json(self.path, {})
-
-    def _write(self, data: dict[str, dict[str, Any]]) -> None:
-        write_json_atomic(self.path, data, indent=2)
-
+class RunControl(JsonStore):
     def pause(self, run_id: str, reason: str, tool: str) -> None:
         with self._lock:
             data = self._read()
@@ -75,7 +64,8 @@ class RunControl:
 
     def get(self, run_id: str) -> dict[str, Any] | None:
         with self._lock:
-            return self._read().get(run_id)
+            entry: dict[str, Any] | None = self._read().get(run_id)
+            return entry
 
     def paused(self) -> dict[str, dict[str, Any]]:
         with self._lock:
@@ -99,7 +89,7 @@ class RunControl:
         """For the gate: if a resume was requested, retire the old id and say who asked."""
         with self._lock:
             data = self._read()
-            entry = data.get(run_id)
+            entry: dict[str, Any] | None = data.get(run_id)
             if not entry or entry["status"] != "paused" or "resume_requested_by" not in entry:
                 return None
             entry["status"] = "revoked"

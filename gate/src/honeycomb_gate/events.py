@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from honeycomb_gate.locking import FileLock, LockedError
+from honeycomb_gate.locking import LockedError, lock_for
 from honeycomb_gate.redact import redact, sanitize_name
 
 SCHEMA_VERSION = 1
@@ -43,15 +43,18 @@ def new_run_id() -> str:
     return "run_" + ulid_like()
 
 
+def canonical_json(value: Any) -> bytes:
+    """One byte string per value: sorted keys, no spaces. What every hash in the gate is over."""
+    return json.dumps(value, sort_keys=True, default=str, separators=(",", ":")).encode()
+
+
 def digest(payload: Any) -> str:
     """SHA-256 of the canonical JSON of the full, unredacted payload."""
-    raw = json.dumps(payload, sort_keys=True, default=str, separators=(",", ":")).encode()
-    return "sha256:" + hashlib.sha256(raw).hexdigest()
+    return "sha256:" + hashlib.sha256(canonical_json(payload)).hexdigest()
 
 
 def _canonical(event: dict[str, Any]) -> bytes:
-    body = {k: v for k, v in event.items() if k != "hash"}
-    return json.dumps(body, sort_keys=True, default=str, separators=(",", ":")).encode()
+    return canonical_json({k: v for k, v in event.items() if k != "hash"})
 
 
 def compute_hash(event: dict[str, Any]) -> str:
@@ -79,7 +82,7 @@ class EventLog:
         self._lock = threading.Lock()
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         # One writer per log: a second gate on the same file would fork the hash chain.
-        self._file_lock = FileLock(path.with_name(path.name + ".lock"))
+        self._file_lock = lock_for(path)
         try:
             self._file_lock.acquire(blocking=False)
         except LockedError as exc:

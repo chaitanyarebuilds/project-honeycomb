@@ -1,0 +1,21 @@
+name: Prior art
+description: A project, product or paper we should know about.
+title: "prior art: "
+labels: ["prior-art"]
+body:
+  - type: input
+    id: link
+    attributes:
+      label: Link
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What is it, and how does it overlap with Project Honeycomb?
+    validations:
+      required: true
+  - type: input
+    id: licence
+    attributes:
+      label: Licence, if you know it

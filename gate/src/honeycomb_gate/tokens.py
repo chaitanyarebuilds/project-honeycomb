@@ -17,7 +17,12 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote
 
-from honeycomb_gate.locking import FileLock, StateCorruptError, read_json, write_json_atomic
+from honeycomb_gate.locking import (
+    StateCorruptError,
+    lock_for,
+    read_json,
+    write_json_atomic,
+)
 from honeycomb_gate.walk import strings_of
 
 KINDS = ("api-key", "db-url", "webhook-url", "password")
@@ -92,7 +97,7 @@ class TokenRegistry:
         """
         self.path = path
         self._read_only = read_only
-        self._lock = FileLock(path.with_name(path.name + ".lock"))
+        self._lock = lock_for(path)
         self._cache: list[Token] = []
         self._mtime: int | None = None
 

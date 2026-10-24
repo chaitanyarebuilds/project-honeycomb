@@ -15,10 +15,10 @@ import json
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
-from honeycomb_gate.locking import FileLock, read_json, write_json_atomic
+from honeycomb_gate.events import canonical_json
+from honeycomb_gate.locking import JsonStore
 from honeycomb_gate.walk import strings_of
 
 APPROVED = "approved"
@@ -36,8 +36,7 @@ def definition_of(tool: Any) -> dict[str, Any]:
 
 
 def definition_hash(definition: dict[str, Any]) -> str:
-    raw = json.dumps(definition, sort_keys=True, separators=(",", ":"), default=str).encode()
-    return "sha256:" + hashlib.sha256(raw).hexdigest()
+    return "sha256:" + hashlib.sha256(canonical_json(definition)).hexdigest()
 
 
 @dataclass
@@ -50,18 +49,10 @@ class PinResult:
     earlier: list[tuple[str, dict[str, str]]] = field(default_factory=list)  # events to log first
 
 
-class PinStore:
+class PinStore(JsonStore):
     """JSON file of pins, safe to share between the running gate and the operator's CLI."""
 
-    def __init__(self, path: Path) -> None:
-        self.path = path
-        self._lock = FileLock(path.with_name(path.name + ".lock"))
-
-    def _read(self) -> dict[str, dict[str, dict[str, Any]]]:
-        return read_json(self.path, {})
-
-    def _write(self, data: dict[str, dict[str, dict[str, Any]]]) -> None:
-        write_json_atomic(self.path, data, indent=2, sort_keys=True)
+    sort_keys = True  # a pin file diffs cleanly
 
     def entries(self) -> dict[str, dict[str, dict[str, Any]]]:
         with self._lock:
