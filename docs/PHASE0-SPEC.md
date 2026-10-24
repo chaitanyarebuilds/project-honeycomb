@@ -104,8 +104,8 @@ flowchart LR
 
 **F3. Tool registry and pinning.**
 
-- On first sight, record a SHA-256 of each tool's (name, description, input schema) per upstream server.
-- On any change, log `tool.definition_changed` and quarantine the tool until an operator runs `honeycomb-gate tools approve`.
+- On first sight, record a SHA-256 of each tool's definition per upstream server. The hash covers everything the agent sees: name, title, description, input and output schemas, annotations and execution hints. `_meta` and icons are not forwarded and not hashed.
+- On any change, log `tool.definition_changed` and quarantine the tool until an operator reviews it (`honeycomb-gate tools show`) and approves the exact pending hash (`honeycomb-gate tools approve --hash`).
 - Heuristically flag instruction-like text in descriptions ("ignore previous", "do not tell the user", URLs, encoded blobs) as `tool.suspicious_description`.
 
 **F4. Policy engine.**
@@ -184,7 +184,6 @@ flowchart LR
   "severity": "critical",
   "run_id": "run_...",
   "agent_id": "support-bot",
-  "session_id": "sess_...",
   "upstream": "crm",
   "tool": "crm__export_all_customer_data",
   "decision": "trip",
@@ -192,22 +191,26 @@ flowchart LR
   "args_digest": "sha256:...",
   "args_redacted": {"format": "csv"},
   "latency_ms": 3,
-  "details": {}
+  "details": {},
+  "prev_hash": "sha256:...",
+  "hash": "sha256:..."
 }
 ```
+
+Changes in M1 (ADR-0002, ADR-0005; schema v1 was not yet released): `run_id` is always present and is minted by the gate, one per connection; `session_id` is gone from the core schema and may be added only when a transport provides one; `prev_hash` and `hash` chain every event to the one before it (SHA-256 over the canonical JSON of the event without `hash`). `session.started`, `session.paused` and `session.ended` mark the lifecycle of a run. Reasons for a denial are in `details.reason`. `call.allowed` is written before the call is forwarded and `call.completed` after it (with `latency_ms`), so a call never happens without a record. The checkpoint rows written to the second sink are not events. Upstream names are lower-case letters, digits and `-` (1 to 32 characters, starting with a letter). Honeytoken events carry `details.honeytoken_id` (not `token_id`: the redactor hides anything named like a secret). `args_redacted` is passed through secret redaction before it is stored.
 
 Event kinds:
 
 - `session.started`, `session.paused`, `session.ended`
-- `tools.listed`, `tool.definition_changed`, `tool.suspicious_description`
-- `call.allowed`, `call.denied`, `call.approval_requested`, `call.approved`, `call.approval_denied`, `call.approval_timeout`
+- `tools.listed`, `tool.pinned`, `tool.definition_changed`, `tool.unapproved`, `tool.approved`, `tool.suspicious_description`
+- `call.allowed`, `call.completed`, `call.denied`, `call.approval_requested`, `call.approved`, `call.approval_denied`, `call.approval_timeout`
 - `decoy.tripped`, `honeytoken.used`, `egress.blocked`
 - `identity.issued`, `identity.revoked`
 - `baseline.deviation`
 - `memory.rule_learned`, `memory.rule_matched`
 - `gate.error`
 
-**Policy file (sketch):**
+**Policy file (sketch).** Implemented in M1: `mode`, `high_impact`, `rules` with `allow` and `deny`, and the matchers `tool` (glob), `upstream`, and per-argument `equals`, `regex`, `max_length` and `max_items`. `max_length` and `max_items` are limits: the matcher fires when the argument **exceeds** them, so a rule can target oversized arguments. `approve`, `quorum` and `caps` are refused at load time until M4, and unknown fields are rejected. Argument matchers must name a `tool` or `upstream`; a deny rule treats a missing or wrong-typed argument as a match. Also configurable: `upstreams.<name>.env` (the only environment an upstream process receives; the gate's own environment, such as mail credentials, is never passed on), `decoys` (`count`, `vocabulary`, `placement`, `on_trip.response`, `on_trip.tarpit_delay_s`), `notify` (`email`, `webhook_url`, `dedupe_window_s`), `agent_id`, `state_dir`, `event_log`, `alert_sink` (second sink for high and critical events and a checkpoint after every event), and `recheck_ttl_s` (default 0: re-check each tool's live definition on every call).
 
 ```yaml
 schema_version: 1
@@ -302,11 +305,11 @@ All services sit on an `internal: true` network.
 
 **M1: firewall (weeks 2–3)**
 
-- [ ] Event log (F2) and the `events` CLI
-- [ ] Tool registry, pinning and quarantine (F3)
-- [ ] Policy engine allow and deny, plus modes (F4)
-- [ ] `docs/THREAT-MODEL.md`
-- [ ] S2 passes
+- [x] Event log (F2) and the `events` CLI: redaction, hash chain, SQLite index, `events tail|query|verify`, second sink with checkpoints
+- [x] Tool registry, pinning and quarantine (F3): `tools list|show|approve`, description flags
+- [x] Policy engine allow and deny, plus modes (F4): `policy check`; fails closed for high-impact tools
+- [x] `docs/THREAT-MODEL.md` (awaiting community review before gate G1)
+- [x] S2 passes (as an automated test against the sample server; the Docker lab version arrives with the lab in M3)
 
 **M2: decoys (weeks 3–4)**
 

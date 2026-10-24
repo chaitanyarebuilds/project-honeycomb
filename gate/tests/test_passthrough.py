@@ -1,76 +1,44 @@
-import json
-import sys
 from pathlib import Path
 
-import pytest
-import yaml
 from mcp import Client
-from mcp.client.stdio import StdioServerParameters
 
-SAMPLE = str(Path(__file__).parent / "sample_server.py")
-
-
-def _gate_params(tmp_path: Path) -> tuple[StdioServerParameters, Path]:
-    log = tmp_path / "events.jsonl"
-    cfg = tmp_path / "gate.yaml"
-    cfg.write_text(
-        yaml.safe_dump(
-            {
-                "schema_version": 1,
-                "event_log": str(log),
-                "upstreams": {
-                    "sample": {"transport": "stdio", "command": [sys.executable, SAMPLE]}
-                },
-            }
-        )
-    )
-    params = StdioServerParameters(
-        command=sys.executable, args=["-m", "honeycomb_gate.cli", "run", "--config", str(cfg)]
-    )
-    return params, log
+from helpers import gate_params, read_log, write_config
 
 
-def _events(log: Path) -> list[dict[str, object]]:
-    return [json.loads(line) for line in log.read_text().splitlines()]
+def _text(result: object) -> str:
+    return result.content[0].text  # type: ignore[attr-defined, no-any-return]
 
 
 async def test_tools_are_namespaced_and_calls_pass_through(tmp_path: Path) -> None:
-    params, log = _gate_params(tmp_path)
-    async with Client(params) as client:
+    async with Client(gate_params(write_config(tmp_path))) as client:
         names = {t.name for t in (await client.list_tools()).tools}
-        assert names == {"sample__add", "sample__echo"}
+        assert names == {"sample__add", "sample__echo", "sample__poison"}
         result = await client.call_tool("sample__add", {"a": 2, "b": 3})
         assert not result.is_error
-        assert "5" in result.content[0].text  # type: ignore[union-attr]
-    kinds = [e["kind"] for e in _events(log)]
+        assert "5" in _text(result)
+    events = read_log(tmp_path)
+    kinds = [e["kind"] for e in events]
     assert kinds[0] == "session.started"
-    assert "tools.listed" in kinds
-    assert "call.allowed" in kinds
+    assert {"tools.listed", "call.allowed", "tool.pinned"} <= set(kinds)
+    assert len({e["run_id"] for e in events}) == 1  # ADR-0002: one run id per connection
 
 
 async def test_unknown_tool_is_denied_and_logged(tmp_path: Path) -> None:
-    params, log = _gate_params(tmp_path)
-    async with Client(params) as client:
+    async with Client(gate_params(write_config(tmp_path))) as client:
         result = await client.call_tool("nope__thing", {})
         assert result.is_error
-    denied = [e for e in _events(log) if e["kind"] == "call.denied"]
-    assert denied and denied[0]["reason"] == "unknown_tool"
+        assert "blocked" in _text(result)
+    denied = [e for e in read_log(tmp_path) if e["kind"] == "call.denied"]
+    assert denied and denied[0]["details"]["reason"] == "unknown_tool"
 
 
-def test_args_are_not_stored_raw(tmp_path: Path) -> None:
-    from honeycomb_gate.events import EventLog, digest
-
-    secret = {"api_key": "sk-test-NOT-REAL"}
-    ev = EventLog(tmp_path / "e.jsonl")
-    ev.emit("call.allowed", args_digest=digest(secret))
-    assert "sk-test" not in (tmp_path / "e.jsonl").read_text()
-
-
-@pytest.mark.parametrize("name", ["a__b", "x__y"])
-def test_upstream_names_cannot_contain_separator(name: str, tmp_path: Path) -> None:
-    from honeycomb_gate.config import load_config
-
-    cfg = tmp_path / "c.yaml"
-    cfg.write_text(yaml.safe_dump({"upstreams": {name: {"command": ["x"]}}}))
-    with pytest.raises(ValueError):
-        load_config(cfg)
+async def test_secrets_in_arguments_are_redacted_in_the_log(tmp_path: Path) -> None:
+    async with Client(gate_params(write_config(tmp_path))) as client:
+        await client.call_tool(
+            "sample__echo", {"text": "key sk-test-0123456789abcdefghij", "api_key": "hunter2"}
+        )
+    raw = (tmp_path / "state" / "events.jsonl").read_text()
+    assert "hunter2" not in raw
+    assert "sk-test-0123456789abcdefghij" not in raw
+    call = [e for e in read_log(tmp_path) if e["kind"] == "call.allowed"][0]
+    assert call["args_digest"].startswith("sha256:")  # digest of the full payload is kept

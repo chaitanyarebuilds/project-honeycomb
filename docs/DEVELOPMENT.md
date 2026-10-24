@@ -22,7 +22,11 @@ You need Python 3.12 or newer and [uv](https://docs.astral.sh/uv/). On Windows 1
 | Lint and format | `uv run ruff check . --fix` then `uv run ruff format .` |
 | Types | `uv run mypy gate/src` |
 | Run the gate | `uv run honeycomb-gate run --config policies/example.yaml` |
-| Read recent events | `uv run honeycomb-gate events tail` |
+| Validate a config and policy | `uv run honeycomb-gate policy check --config policies/example.yaml` |
+| Read recent events | `uv run honeycomb-gate events tail --config policies/example.yaml` |
+| Search events | `uv run honeycomb-gate events query --severity high --config policies/example.yaml` |
+| Check the log has not been tampered with | `uv run honeycomb-gate events verify --config policies/example.yaml` |
+| Review and approve a changed tool | `uv run honeycomb-gate tools list --config ...`, then `tools show upstream__tool --config ...`, then `tools approve upstream__tool --hash <pending hash> --config ...` |
 | Lab (planned, M2 onward) | `docker compose -f lab/docker-compose.yml up --build -d`, then `uv run lab-run --scenario all` |
 
 CI runs ruff, mypy and pytest on every pull request.

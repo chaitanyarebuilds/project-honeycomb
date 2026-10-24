@@ -1,6 +1,6 @@
 # M0 config: transparent pass-through, one stdio upstream. Policy rules arrive in M1.
 schema_version: 1
-event_log: .honeycomb/events.jsonl
+state_dir: .honeycomb
 upstreams:
   sample:
     transport: stdio

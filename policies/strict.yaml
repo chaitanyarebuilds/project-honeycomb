@@ -1,0 +1,16 @@
+# Strict mode: only tools allowed by a rule are visible or callable, and every tool must be
+# approved once (`honeycomb-gate tools approve upstream__tool`) before it can be used.
+schema_version: 1
+mode: strict
+state_dir: .honeycomb
+upstreams:
+  sample:
+    transport: stdio
+    command: ["uv", "run", "python", "gate/tests/sample_server.py"]
+rules:
+  - id: deny-test-helper
+    match: { tool: "sample__poison" }
+    action: deny
+  - id: allow-sample
+    match: { upstream: sample }
+    action: allow

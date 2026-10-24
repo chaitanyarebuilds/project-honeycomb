@@ -1,0 +1,13 @@
+# Learning mode: unknown tools are allowed and logged, definitions are pinned on first sight.
+# Good for the first days of a deployment, while you watch what your agents really do.
+schema_version: 1
+mode: learning
+state_dir: .honeycomb
+upstreams:
+  sample:
+    transport: stdio
+    command: ["uv", "run", "python", "gate/tests/sample_server.py"]
+rules:
+  - id: deny-shell
+    match: { tool: "*__exec*" }
+    action: deny
