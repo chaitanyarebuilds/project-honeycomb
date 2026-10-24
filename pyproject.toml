@@ -22,6 +22,7 @@ packages = ["gate/src/honeycomb_gate"]
 
 [tool.pytest.ini_options]
 testpaths = ["gate/tests"]
+pythonpath = [".", "gate/tests"]
 asyncio_mode = "auto"
 
 [tool.ruff]

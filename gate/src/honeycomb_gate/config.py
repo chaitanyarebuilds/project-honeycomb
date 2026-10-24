@@ -6,6 +6,8 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
+from honeycomb_gate.decoys import DecoyConfig
+from honeycomb_gate.notify import NotifyConfig
 from honeycomb_gate.policy import PolicyConfig
 
 
@@ -13,6 +15,9 @@ class Upstream(BaseModel):
     model_config = ConfigDict(extra="forbid")
     transport: str = "stdio"
     command: list[str] = Field(min_length=1)
+    # Extra environment for this upstream only. The gate's own environment (mail credentials,
+    # API keys) is deliberately not passed on.
+    env: dict[str, str] = Field(default_factory=dict)
 
 
 class GateConfig(PolicyConfig):
@@ -25,6 +30,8 @@ class GateConfig(PolicyConfig):
     # upstream on every call, so a rug pull is caught on the very next call. A higher value
     # saves a round trip per call but leaves a window in which a changed tool is still trusted.
     recheck_ttl_s: float = 0.0
+    decoys: DecoyConfig = Field(default_factory=DecoyConfig)
+    notify: NotifyConfig = Field(default_factory=NotifyConfig)
     upstreams: dict[str, Upstream]
 
     @property
@@ -34,6 +41,22 @@ class GateConfig(PolicyConfig):
     @property
     def pins_path(self) -> Path:
         return self.state_dir / "pins.json"
+
+    @property
+    def tokens_path(self) -> Path:
+        return self.state_dir / "tokens.json"
+
+    @property
+    def runs_path(self) -> Path:
+        return self.state_dir / "runs.json"
+
+    @property
+    def decoys_path(self) -> Path:
+        return self.state_dir / "decoys.json"
+
+    @property
+    def incidents_dir(self) -> Path:
+        return self.state_dir / "incidents"
 
 
 def load_config(path: Path) -> GateConfig:

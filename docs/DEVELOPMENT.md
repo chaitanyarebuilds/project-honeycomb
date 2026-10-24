@@ -26,6 +26,9 @@ You need Python 3.12 or newer and [uv](https://docs.astral.sh/uv/). On Windows 1
 | Read recent events | `uv run honeycomb-gate events tail --config policies/example.yaml` |
 | Search events | `uv run honeycomb-gate events query --severity high --config policies/example.yaml` |
 | Check the log has not been tampered with | `uv run honeycomb-gate events verify --config policies/example.yaml` |
+| Plant a honeytoken in an agent workspace | `uv run honeycomb-gate tokens create --kind api-key --place <workspace folder> --config ...` (never inside the repo) |
+| Paused runs and incidents | `uv run honeycomb-gate runs list --config ...`, `incidents list`, `incidents show <id>`, `runs resume <run id>` |
+| Check email settings | copy `.env.example` to `.env`, fill it in, then `uv run honeycomb-gate notify test --config ...` |
 | Review and approve a changed tool | `uv run honeycomb-gate tools list --config ...`, then `tools show upstream__tool --config ...`, then `tools approve upstream__tool --hash <pending hash> --config ...` |
 | Lab (planned, M2 onward) | `docker compose -f lab/docker-compose.yml up --build -d`, then `uv run lab-run --scenario all` |
 

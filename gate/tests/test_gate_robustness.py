@@ -1,5 +1,6 @@
 """Failure-path tests for the gate: hostile upstream behaviour and audit-before-action."""
 
+import json
 import threading
 from pathlib import Path
 from types import SimpleNamespace
@@ -97,3 +98,62 @@ def test_concurrent_approvals_and_checks_do_not_lose_updates(tmp_path: Path) -> 
         t.join()
     assert not errors
     assert len(PinStore(path).entries()["u"]) == 50  # every pin survived
+
+
+async def test_a_call_that_was_waiting_when_the_run_paused_is_not_forwarded(tmp_path: Path) -> None:
+    client = FakeClient({None: types.ListToolsResult(tools=[tool()])})
+    gate = make_gate(tmp_path, client)
+    real_fetch = gate._fetch
+
+    async def fetch_then_pause(upstream: str, *, max_age: float) -> dict[str, types.Tool]:
+        tools = await real_fetch(upstream, max_age=max_age)
+        gate.paused = True  # another call tripped while this one was in flight
+        return tools
+
+    gate._fetch = fetch_then_pause  # type: ignore[method-assign]
+    params = types.CallToolRequestParams(name="sample__t", arguments={})
+    result = await gate.call_tool(SimpleNamespace(), params)  # type: ignore[arg-type]
+    assert result.is_error and client.calls == []
+
+
+async def test_a_second_trip_while_paused_is_evidence_not_a_second_incident(tmp_path: Path) -> None:
+    class Leaky(FakeClient):
+        async def call_tool(
+            self, name: str, arguments: dict[str, Any] | None
+        ) -> types.CallToolResult:
+            gate.paused = True  # a concurrent call tripped first
+            return types.CallToolResult(content=[types.TextContent(type="text", text=token.value)])
+
+    client = Leaky({None: types.ListToolsResult(tools=[tool()])})
+    gate = make_gate(tmp_path, client)
+    token = gate.tokens.create("api-key")
+    result = await gate.call_tool(
+        SimpleNamespace(), types.CallToolRequestParams(name="sample__t", arguments={})
+    )  # type: ignore[arg-type]
+    assert result.is_error and token.value not in str(result.content)
+    events = [json.loads(line) for line in gate.log.path.read_text().splitlines()]
+    trips = [e for e in events if e["kind"] == "honeytoken.used"]
+    assert len(trips) == 1 and trips[0]["details"]["already_paused"] is True
+    assert not list(gate.incidents.dir.glob("inc_*.json")) if gate.incidents.dir.exists() else True
+
+
+async def test_a_token_smuggled_in_a_tool_name_trips_and_is_never_logged(tmp_path: Path) -> None:
+    client = FakeClient({None: types.ListToolsResult(tools=[tool()])})
+    gate = make_gate(tmp_path, client)
+    token = gate.tokens.create("api-key")
+    params = types.CallToolRequestParams(name=f"sample__{token.value}", arguments={})
+    result = await gate.call_tool(SimpleNamespace(), params)  # type: ignore[arg-type]
+    assert result.is_error and client.calls == []
+    raw = gate.log.path.read_text()
+    assert token.value not in raw and token.value.lower() not in raw.lower()
+    assert "honeytoken.used" in raw and f"sample__[HONEYTOKEN:{token.id}]" in raw
+    saved = " ".join(p.read_text() for p in gate.incidents.dir.glob("inc_*.json"))
+    assert token.value not in saved
+
+
+async def test_oversized_calls_are_refused_rather_than_scanned_partially(tmp_path: Path) -> None:
+    client = FakeClient({None: types.ListToolsResult(tools=[tool()])})
+    gate = make_gate(tmp_path, client)
+    params = types.CallToolRequestParams(name="sample__t", arguments={"x": "a" * 4_500_000})
+    result = await gate.call_tool(SimpleNamespace(), params)  # type: ignore[arg-type]
+    assert result.is_error and client.calls == []

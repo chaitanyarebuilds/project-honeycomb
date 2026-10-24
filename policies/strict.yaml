@@ -3,6 +3,12 @@
 schema_version: 1
 mode: strict
 state_dir: .honeycomb
+decoys:
+  count: 2           # fake tools only a hijacked agent would call
+  on_trip:
+    response: tarpit
+notify:
+  email: false      # set true once SMTP settings are in .env
 upstreams:
   sample:
     transport: stdio

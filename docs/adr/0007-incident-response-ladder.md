@@ -27,5 +27,5 @@ Decoy and honeytoken trips are high-fidelity and reversible (a run can be resume
 ## Consequences
 
 - Needs an acknowledgement path (`honeycomb-gate incidents ack`).
-- Steps 3 and 4 are automatic on a trip (approved).
+- Steps 3 and 4 are automatic on a trip (approved). Until signed run tokens exist (M3), "revoke identity" means the run id is retired and the gate refuses it, including after a restart.
 - Open question for the owner: while a human is on their way, may the gate also take other reversible holding actions (for example step 5, isolating the agent) and leave irreversible ones (step 6, credential rotation) for the human? Until answered, only steps 3 and 4 are automatic.

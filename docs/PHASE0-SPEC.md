@@ -119,14 +119,15 @@ flowchart LR
 
 - Decoys are defined in config and injected into `tools/list`, with names and descriptions believable for the organisation.
 - They are never forwarded upstream.
-- Any call trips `decoy.tripped` (critical). The session is paused, the run identity revoked, and an alert sent.
+- Any call trips `decoy.tripped` (critical). The run is paused, its identity revoked and an incident opened, all automatically (ADR-0007, steps 3 and 4). Nothing beyond that happens without a person. A paused run stays blocked until `honeycomb-gate runs resume`, which retires the old identity and issues a new one. The pause survives a restart: a gate that starts while a run is paused starts paused too, under a new run id that the operator resumes. In M2, "revoking the identity" means retiring the run id; signed run tokens come in M3.
 - The trip response is either an immediate error or a tarpit: slowly dripped, plausible synthetic data built from templates.
-- Decoy names are drawn per deployment from a vocabulary, so they don't become a fingerprint. They must never collide with real tool names, and they are excluded from baselines.
+- Decoy names are drawn per deployment from a vocabulary and stored in the state directory, so a deployment keeps its decoys but two deployments do not share a fingerprint. A decoy that would collide with a real tool name is left out and `decoy.collision` is logged; calls to that name go to the real tool. They are excluded from baselines. Credential-like decoys return a fresh honeytoken, so later use of it is caught too.
+- Tarpit responses are template-based, seeded by the call, so the same question always gets the same answer. Row count, id range, phone prefix, example domain, wording and delay differ per deployment. They use only reserved example domains and never real data. `on_trip.response: error` returns no data instead.
 
 **F6. Honeytokens.**
 
-- `honeycomb-gate tokens create --kind <api-key|db-url|webhook-url|password> --place <path>` generates fake credentials with an embedded ID and plants them in the agent's workspace, memory or documents.
-- The gate scans tool arguments, tool responses and egress logs for every registered token. Any appearance trips `honeytoken.used` (critical).
+- `honeycomb-gate tokens create --kind <api-key|db-url|webhook-url|password> --place <path>` generates fake credentials with an embedded ID and plants them as an env-style line in a file (or `.env.old` in a folder) in the agent's workspace. It refuses a path inside a git repository unless `--allow-in-repo` is given.
+- The gate scans the tool name, the arguments and the tool results for every active registered token (by value or by its embedded id, ignoring case and invisible characters, and also inside base64 or split across fields). A hit in the name or arguments blocks the call before it is forwarded; a hit in a result withholds the result. Either trips `honeytoken.used` (critical) and the same pause, revoke and incident steps as a decoy. Token values are masked in everything that is logged. Calls larger than 4 million characters are refused. Scanning egress logs arrives with the egress proxy in M3.
 - Tokens are generated at deploy time and never committed.
 
 **F7. Run identity.**
@@ -155,16 +156,23 @@ flowchart LR
 - A timeout means deny. Critical rules can require a quorum (N of M approvers).
 - Every decision is logged with the approver's identity.
 
-**F11. Alerts.**
+**F11. Alerts and incidents** (see ADR-0007).
 
+- A trip opens an incident (a JSON file under `incidents/`) whose message answers five questions: what happened, how sure, what the gate already did, what to do now, how protected we are. `honeycomb-gate incidents list|show|ack`.
+- Delivered by email (SMTP, settings from the environment or `.env`, never from the repo) and a generic webhook. A failure to send is logged as `notify.failed` and never weakens containment; the run is already paused. `honeycomb-gate notify test` sends a labelled test message.
+- Escalation when nobody acknowledges arrives in M4.
 - Delivered to the console and a webhook as JSON.
 - Severity levels are info, low, medium, high and critical. Repeats are deduplicated within a time window.
 
 **F12. CLI.**
 
 - `honeycomb-gate run`
-- `tools list|approve`
+- `tools list|show|approve`
 - `decoys list`
+- `runs list|resume`
+- `incidents list|show|ack`
+- `notify test`
+- `policy check`
 - `tokens create|list|revoke`
 - `events tail|query`
 - `approvals list|approve|deny`
@@ -204,8 +212,9 @@ Event kinds:
 - `session.started`, `session.paused`, `session.ended`
 - `tools.listed`, `tool.pinned`, `tool.definition_changed`, `tool.unapproved`, `tool.approved`, `tool.suspicious_description`
 - `call.allowed`, `call.completed`, `call.denied`, `call.approval_requested`, `call.approved`, `call.approval_denied`, `call.approval_timeout`
-- `decoy.tripped`, `honeytoken.used`, `egress.blocked`
-- `identity.issued`, `identity.revoked`
+- `decoy.tripped`, `decoy.collision`, `honeytoken.used`, `egress.blocked`
+- `incident.opened`, `incident.notified`, `incident.deduplicated`, `notify.failed`
+- `identity.issued`, `identity.revoked`, `session.resumed`
 - `baseline.deviation`
 - `memory.rule_learned`, `memory.rule_matched`
 - `gate.error`
@@ -223,7 +232,7 @@ upstreams:
 decoys:
   vocabulary: [export_all_customer_data, get_admin_api_key, list_payroll_accounts]
   count: 2
-  on_trip: { pause_session: true, revoke_identity: true, response: tarpit }
+  on_trip: { response: tarpit }   # pausing and revoking are not optional
 rules:
   - id: deny-shell
     match: { tool: "*__exec*" }
@@ -313,9 +322,10 @@ All services sit on an `internal: true` network.
 
 **M2: decoys (weeks 3–4)**
 
-- [ ] Decoy tools and tarpit (F5)
-- [ ] Honeytokens (F6)
-- [ ] S1 passes, and the honeytoken half of S3 passes
+- [x] Decoy tools and tarpit (F5)
+- [x] Honeytokens (F6)
+- [x] S1 passes, and the honeytoken half of S3 passes (arguments and results; egress logs arrive in M3)
+- [x] Incident record and email/webhook notifier (F11, first part), tested against a local fake mail server; the first real send is run by the owner with `honeycomb-gate notify test`
 
 **M3: identity and egress (weeks 5–6)**
 
