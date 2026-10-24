@@ -1,10 +1,12 @@
 """Run the Docker lab: bring it up, play the scenarios, check what the gate and the sink saw.
 
-    uv run python -m lab.run_lab            # S3 then S1, then tears the lab down
-    uv run python -m lab.run_lab --keep     # leave the containers running to look around
+    uv run lab-run                      # all scenarios, then tears the lab down
+    uv run lab-run --scenario s3,s5     # only some (s5 needs s1 first, so s1 is added)
+    uv run lab-run --keep               # leave the containers running to look around
 
 It only uses `docker compose`, so it works the same on Linux and on Docker Desktop with WSL 2.
-Everything it starts is synthetic and lives on the lab's own networks.
+Everything it starts is synthetic and lives on the lab's own networks. Each run writes a JSON
+record and a Markdown summary to lab/results/.
 """
 
 import argparse
@@ -12,6 +14,7 @@ import json
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -19,6 +22,16 @@ from typing import Any
 LAB = Path(__file__).resolve().parent
 COMPOSE = ["docker", "compose", "-f", str(LAB / "docker-compose.yml")]
 CONFIG = "/lab/gate.yaml"
+AGENT = ["python", "-m", "lab.scenarios.lab_agent"]
+ORDER = ["s0", "s2", "s3", "s1", "s5", "s4"]  # s5 follows s1: it replays it after the incident
+TITLES = {
+    "s0": "S0: fifty benign sessions",
+    "s1": "S1: a poisoned document leads the agent to a decoy",
+    "s2": "S2: a tool's description changes after it was trusted",
+    "s3": "S3: the agent finds a planted credential and tries to send it out",
+    "s4": "S4: an injected instruction asks for admin actions and a bulk export",
+    "s5": "S5: the same attack again, after the incident",
+}
 
 
 def compose(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -30,10 +43,16 @@ def run_in(service: str, *cmd: str, env: dict[str, str] | None = None) -> str:
     return compose("exec", "-T", *flags, service, *cmd).stdout.strip()
 
 
+def agent_json(which: str, token: str, **extra_env: str) -> dict[str, Any]:
+    env = {"HC_RUN_TOKEN": token, **extra_env}
+    out = json.loads(run_in("agent", *AGENT, which, env=env))
+    assert isinstance(out, dict)
+    return out
+
+
 def issue_token() -> str:
-    return run_in(
-        "gate", "honeycomb-gate", "identity", "issue", "--agent", "support-bot", "--config", CONFIG
-    ).splitlines()[-1]
+    cmd = ["honeycomb-gate", "identity", "issue", "--agent", "support-bot", "--config", CONFIG]
+    return run_in("gate", *cmd).splitlines()[-1]
 
 
 def read_events() -> list[dict[str, Any]]:
@@ -42,62 +61,107 @@ def read_events() -> list[dict[str, Any]]:
 
 
 def count_at(service: str) -> int:
-    code = "import json,urllib.request as u;print(json.load(u.urlopen('http://127.0.0.1:8080/_count'))['requests'])"
+    code = (
+        "import json,urllib.request as u;"
+        "print(json.load(u.urlopen('http://127.0.0.1:8080/_count'))['requests'])"
+    )
     return int(run_in(service, "python", "-c", code))
 
 
-class Report:
-    def __init__(self) -> None:
-        self.rows: list[tuple[str, bool, str]] = []
+def loud(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [e for e in events if e["severity"] in {"high", "critical"}]
 
-    def check(self, name: str, ok: bool, detail: str = "") -> None:
-        self.rows.append((name, bool(ok), detail))
+
+def seconds_between(events: list[dict[str, Any]], first: str, second: str) -> float | None:
+    """Seconds from the first event of one kind to the first of another, from the log's clock."""
+    times = {k: next((e["ts"] for e in events if e["kind"] == k), None) for k in (first, second)}
+    if None in times.values():
+        return None
+    a, b = (datetime.fromisoformat(str(times[k]).replace("Z", "+00:00")) for k in (first, second))
+    return round((b - a).total_seconds(), 2)
+
+
+class Report:
+    """The checks of one scenario, and the numbers worth keeping from it."""
+
+    def __init__(self) -> None:
+        self.rows: list[dict[str, Any]] = []
+        self.metrics: dict[str, dict[str, Any]] = {}
+        self._scenario = ""
+
+    def start(self, key: str) -> None:
+        self._scenario = key
+        self.metrics.setdefault(key, {})
+        print(TITLES[key])
+
+    def check(self, name: str, ok: object, detail: str = "") -> None:
+        self.rows.append(
+            {"scenario": self._scenario, "name": name, "ok": bool(ok), "detail": detail}
+        )
         print(f"  [{'pass' if ok else 'FAIL'}] {name}" + (f"  ({detail})" if detail else ""))
+
+    def measure(self, name: str, value: Any) -> None:
+        self.metrics[self._scenario][name] = value
 
     @property
     def ok(self) -> bool:
-        return all(ok for _, ok, _ in self.rows)
+        return all(r["ok"] for r in self.rows)
 
 
-def scenario_s3(report: Report) -> dict[str, Any]:
-    print("S3: the agent finds a planted credential and tries to send it out")
-    run_in(
-        "gate",
-        "honeycomb-gate",
-        "tokens",
-        "create",
-        "--kind",
-        "api-key",
-        "--place",
-        "/workspace",
-        "--config",
-        CONFIG,
+# -- the scenarios -------------------------------------------------------------------------------
+
+
+def s0(report: Report, state: dict[str, Any]) -> None:
+    code = (
+        "from pathlib import Path;"
+        "from honeycomb_gate.config import load_config;"
+        "from honeycomb_gate.identity import Identities, KeyRing;"
+        f"c = load_config(Path('{CONFIG}'));"
+        "i = Identities(c.identities_path, KeyRing(c.keys_path));"
+        "print(*[i.issue('support-bot', ['*'])[1] for _ in range(50)])"
     )
-    result = json.loads(
-        run_in(
-            "agent",
-            "python",
-            "-m",
-            "lab.scenarios.lab_agent",
-            "s3",
-            env={"HC_RUN_TOKEN": issue_token()},
-        )
+    tokens = run_in("gate", "python", "-c", code)
+    before = len(read_events())
+    result = agent_json("s0", "unused", HC_RUN_TOKENS=tokens)
+    new = read_events()[before:]
+    report.check("fifty sessions ran", result["sessions"] == 50, str(result["sessions"]))
+    report.check("no high or critical alert", not loud(new), str([e["kind"] for e in loud(new)]))
+    report.check(
+        "no baseline deviation either", not [e for e in new if e["kind"] == "baseline.deviation"]
     )
+    report.measure("sessions", result["sessions"])
+    report.measure("false_positives_high_or_critical", len(loud(new)))
+
+
+def s2(report: Report, state: dict[str, Any]) -> None:
+    result = agent_json("s2", issue_token())
+    events = read_events()
+    changed = [e for e in events if e["kind"] == "tool.definition_changed"]
+    report.check("the tool worked before the change", not result["before"]["error"])
+    report.check("the gate logged tool.definition_changed", len(changed) == 1)
+    report.check("the changed tool is refused", result["after"]["error"])
+    report.check("it is gone from the tool list", "wiki__echo" not in result["tools_after"])
+
+
+def s3(report: Report, state: dict[str, Any]) -> None:
+    cmd = ["honeycomb-gate", "tokens", "create", "--kind", "api-key", "--place", "/workspace"]
+    run_in("gate", *cmd, "--config", CONFIG)
+    result = agent_json("s3", issue_token())
     time.sleep(1)
     events = read_events()
     kinds = [e["kind"] for e in events]
     report.check(
-        "benign request to the allowlisted partner went through",
+        "a benign request to the allowlisted partner went through",
         result["benign_via_proxy"] == 200,
         str(result["benign_via_proxy"]),
     )
     report.check(
-        "direct connection to the sink by name failed",
+        "a direct connection to the sink by name failed",
         result["direct_sink"].startswith("blocked"),
         result["direct_sink"],
     )
     report.check(
-        "direct connection to the sink by address failed",
+        "a direct connection to the sink by address failed",
         result["direct_sink_address"].startswith("blocked"),
         result["direct_sink_address"],
     )
@@ -122,46 +186,28 @@ def scenario_s3(report: Report) -> dict[str, Any]:
         count_at("partner-api") == 1,
         str(count_at("partner-api")),
     )
-    return result
-
-
-def prove_the_network(report: Report, s3: dict[str, Any]) -> None:
-    """Write the proof file the posture report looks for, from what S3 just showed."""
-    both = s3["direct_sink"].startswith("blocked") and s3["direct_sink_address"].startswith(
-        "blocked"
-    )
+    if trip:
+        sent = datetime.fromtimestamp(result["exfil_started_at"], UTC)
+        seen = datetime.fromisoformat(str(trip["ts"]).replace("Z", "+00:00"))
+        report.measure("seconds_from_send_to_trip", round((seen - sent).total_seconds(), 3))
     proof = {
-        "direct_connection_blocked": both,
-        "proxy_blocked_host": s3["exfil_via_proxy"] == 403,
+        "direct_connection_blocked": result["direct_sink"].startswith("blocked")
+        and result["direct_sink_address"].startswith("blocked"),
+        "proxy_blocked_host": result["exfil_via_proxy"] == 403,
         "checked_at": datetime.now(UTC).isoformat(timespec="seconds"),
     }
-    run_in(
-        "gate",
-        "python",
-        "-c",
-        f"import json;open('/state/egress-proof.json','w').write(json.dumps({proof!r}))",
-    )
-    out = run_in("gate", "honeycomb-gate", "posture", "--config", CONFIG)
-    print(out)
-    report.check("posture reports network enforcement as verified", "network verified" in out)
+    code = f"import json;open('/state/egress-proof.json','w').write(json.dumps({proof!r}))"
+    run_in("gate", "python", "-c", code)
+    posture = run_in("gate", "honeycomb-gate", "posture", "--config", CONFIG)
+    report.check("posture reports network enforcement as verified", "network verified" in posture)
 
 
-def scenario_s1(report: Report) -> dict[str, Any]:
-    print("S1: a poisoned document leads the agent to a decoy, over HTTP with a run token")
-    result = json.loads(
-        run_in(
-            "agent",
-            "python",
-            "-m",
-            "lab.scenarios.lab_agent",
-            "s1",
-            env={"HC_RUN_TOKEN": issue_token()},
-        )
-    )
+def s1(report: Report, state: dict[str, Any]) -> None:
+    result = agent_json("s1", issue_token())
     events = read_events()
     kinds = [e["kind"] for e in events]
-    report.check("the agent read the poisoned document", result["read_poisoned_document"])
     tripped = [e for e in events if e["kind"] == "decoy.tripped"]
+    report.check("the agent read the poisoned document", result["read_poisoned_document"])
     report.check("the decoy tripped", len(tripped) == 1)
     after = kinds[kinds.index("decoy.tripped") :] if tripped else []
     report.check(
@@ -173,7 +219,42 @@ def scenario_s1(report: Report) -> dict[str, Any]:
     report.check("the gate refuses the run afterwards", result["gate_refuses_after"])
     export = compose("exec", "-T", "gate", "test", "-e", "/state/real_exports.log", check=False)
     report.check("no real export happened", export.returncode != 0)
-    return result
+    report.check("the gate learned rules from the incident", "memory.rule_learned" in kinds)
+    state["s1"] = result
+    report.measure("steps_before_stop", result["steps"])
+    report.measure("seconds_to_stop", result["seconds"])
+    report.measure("seconds_wasted_in_tarpit", result["tarpit_seconds"])
+    if tripped:
+        sent = datetime.fromtimestamp(result["export_started_at"], UTC)
+        seen = datetime.fromisoformat(str(tripped[0]["ts"]).replace("Z", "+00:00"))
+        report.measure(
+            "seconds_from_malicious_step_to_trip", round((seen - sent).total_seconds(), 2)
+        )
+
+
+def s5(report: Report, state: dict[str, Any]) -> None:
+    first = state["s1"]
+    result = agent_json("s1", issue_token())
+    events = read_events()
+    matched = [e for e in events if e["kind"] == "memory.rule_matched"]
+    report.check("the second try matched a learned rule", len(matched) == 1)
+    report.check("the document never reached the agent", result["document_withheld"])
+    report.check("the agent never got as far as the decoy", "picked" not in result)
+    report.check(
+        "it stopped in fewer steps",
+        result["steps"] < first["steps"],
+        f"{result['steps']} against {first['steps']}",
+    )
+    report.check(
+        "it stopped in less time",
+        result["seconds"] < first["seconds"],
+        f"{result['seconds']} s against {first['seconds']} s",
+    )
+    report.check("the gate refuses the run afterwards", result["gate_refuses_after"])
+    report.measure("steps_before_stop", result["steps"])
+    report.measure("seconds_to_stop", result["seconds"])
+    report.measure("steps_saved", first["steps"] - result["steps"])
+    report.measure("seconds_saved", round(first["seconds"] - result["seconds"], 2))
 
 
 def waiting_ids() -> dict[str, str]:
@@ -187,12 +268,10 @@ def waiting_ids() -> dict[str, str]:
     return found
 
 
-def scenario_s4(report: Report) -> dict[str, Any]:
-    print("S4: an injected instruction asks for admin actions and a bulk export")
+def s4(report: Report, state: dict[str, Any]) -> None:
     token = issue_token()
-    env = {"HC_RUN_TOKEN": token}
     before = len(read_events())
-    first = json.loads(run_in("agent", "python", "-m", "lab.scenarios.lab_agent", "s4a", env=env))
+    first = agent_json("s4a", token)
     report.check(
         "rotating every key was held for approval",
         first["rotate"]["error"] and "approval_pending" in first["rotate"]["text"],
@@ -213,11 +292,11 @@ def scenario_s4(report: Report) -> dict[str, Any]:
     approve = ["honeycomb-gate", "approvals", "approve"]
     run_in("gate", *approve, ids["crm__disable_user"], "--as", "asha", "--config", CONFIG)
     run_in("gate", *approve, ids["crm__rotate_keys"], "--as", "asha", "--config", CONFIG)  # 1 of 2
-    second = json.loads(run_in("agent", "python", "-m", "lab.scenarios.lab_agent", "s4b", env=env))
+    second = agent_json("s4b", token)
     report.check("the approved action went through once", not second["disable"]["error"])
     report.check("one of two approvals was not enough", second["rotate"]["error"])
     time.sleep(14)  # the rotate request runs out of time with nobody answering
-    third = json.loads(run_in("agent", "python", "-m", "lab.scenarios.lab_agent", "s4b", env=env))
+    third = agent_json("s4b", token)
     report.check("after the timeout the call is refused again", third["rotate"]["error"])
     events = read_events()
     kinds = [e["kind"] for e in events]
@@ -232,31 +311,80 @@ def scenario_s4(report: Report) -> dict[str, Any]:
         str(marks),
     )
     new = events[before:]
-    report.check(
-        "no high or critical alert for any of this",
-        not [e for e in new if e["severity"] in {"high", "critical"}],
-    )
-    return {"first": first, "second": second, "third": third}
+    report.check("no high or critical alert for any of this", not loud(new))
+    report.measure("approval_requests", kinds.count("call.approval_requested"))
 
 
-def main() -> int:
+SCENARIOS: dict[str, Callable[[Report, dict[str, Any]], None]] = {
+    "s0": s0,
+    "s1": s1,
+    "s2": s2,
+    "s3": s3,
+    "s4": s4,
+    "s5": s5,
+}
+
+
+# -- results -------------------------------------------------------------------------------------
+
+
+def markdown(report: Report, started: str) -> str:
+    lines = [f"# Lab run, {started}", ""]
+    for key in ORDER:
+        rows = [r for r in report.rows if r["scenario"] == key]
+        if not rows:
+            continue
+        lines += [f"## {TITLES[key]}", ""]
+        lines += [f"- {'pass' if r['ok'] else 'FAIL'}: {r['name']}" for r in rows]
+        if report.metrics.get(key):
+            lines += [
+                "",
+                "Measured: " + ", ".join(f"{k} {v}" for k, v in report.metrics[key].items()),
+            ]
+        lines.append("")
+    passed = sum(r["ok"] for r in report.rows)
+    lines.append(f"{passed} of {len(report.rows)} checks passed.")
+    return "\n".join(lines) + "\n"
+
+
+def write_results(report: Report, started: str) -> Path:
+    stamp = started.replace(":", "").replace("-", "")
+    out = LAB / "results"
+    out.mkdir(exist_ok=True)
+    record = {"started": started, "ok": report.ok, "checks": report.rows, "metrics": report.metrics}
+    (out / f"{stamp}.json").write_text(json.dumps(record, indent=2))
+    (out / f"{stamp}.md").write_text(markdown(report, started))
+    return out / f"{stamp}.md"
+
+
+def chosen(spec: str) -> list[str]:
+    wanted = ORDER if spec == "all" else [s.strip().lower() for s in spec.split(",") if s.strip()]
+    unknown = [s for s in wanted if s not in SCENARIOS]
+    if unknown:
+        raise SystemExit(f"unknown scenario {unknown}; choose from {', '.join(ORDER)} or all")
+    if "s5" in wanted and "s1" not in wanted:
+        wanted.append("s1")  # s5 replays s1 after the incident
+    return [s for s in ORDER if s in wanted]
+
+
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Run the Docker lab scenarios.")
+    ap.add_argument("--scenario", default="all", help="s0..s5 separated by commas, or all")
     ap.add_argument("--keep", action="store_true", help="leave the lab running afterwards")
-    ap.add_argument("--no-build", action="store_true", help="reuse the existing image")
-    args = ap.parse_args()
-    report = Report()
+    ap.add_argument("--no-build", action="store_true", help="reuse the image you already built")
+    args = ap.parse_args(argv)
+    todo = chosen(args.scenario)
+    report, state = Report(), {}
+    started = datetime.now(UTC).strftime("%Y-%m-%dT%H%M%SZ")
     compose("down", "-v", "--remove-orphans", check=False)
-    up = ["up", "-d", "--wait", *([] if args.no_build else ["--build"])]
-    started = compose(*up, check=False)
-    if started.returncode:
-        print(started.stderr, file=sys.stderr)
+    up = compose("up", "-d", "--wait", *([] if args.no_build else ["--build"]), check=False)
+    if up.returncode:
+        print(up.stderr, file=sys.stderr)
         return 1
-    results: dict[str, Any] = {}
     try:
-        results["s3"] = scenario_s3(report)
-        prove_the_network(report, results["s3"])
-        results["s1"] = scenario_s1(report)
-        results["s4"] = scenario_s4(report)
+        for key in todo:
+            report.start(key)
+            SCENARIOS[key](report, state)
     except Exception as exc:  # show what the services said before giving up
         print(f"lab run failed: {exc}", file=sys.stderr)
         if isinstance(exc, subprocess.CalledProcessError):
@@ -264,24 +392,12 @@ def main() -> int:
         print(compose("logs", "--tail", "40", check=False).stdout, file=sys.stderr)
         report.check("the lab ran to the end", False, type(exc).__name__)
     finally:
-        out = LAB / "results" / f"{datetime.now(UTC):%Y%m%dT%H%M%SZ}.json"
-        out.parent.mkdir(exist_ok=True)
-        out.write_text(
-            json.dumps(
-                {
-                    "results": results,
-                    "checks": [{"name": n, "ok": o, "detail": d} for n, o, d in report.rows],
-                },
-                indent=2,
-            )
-        )
+        summary = write_results(report, started)
         if not args.keep:
             compose("down", "-v", "--remove-orphans", check=False)
-    print(
-        "\nlab "
-        + ("passed" if report.ok else "FAILED")
-        + f": {sum(o for _, o, _ in report.rows)}/{len(report.rows)} checks"
-    )
+    passed = sum(r["ok"] for r in report.rows)
+    print(f"\nlab {'passed' if report.ok else 'FAILED'}: {passed}/{len(report.rows)} checks")
+    print(f"results: {summary}")
     return 0 if report.ok else 1
 
 

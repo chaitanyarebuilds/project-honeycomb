@@ -11,9 +11,10 @@ import fnmatch
 import hashlib
 import json
 import time
+from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AsyncExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, NoReturn
 from urllib.parse import quote, unquote, urlsplit
@@ -45,15 +46,18 @@ from honeycomb_gate.incidents import (
     Incident,
     IncidentStore,
     open_decoy_incident,
+    open_memory_incident,
     open_token_incident,
 )
 from honeycomb_gate.locking import FileLock, LockedError, StateCorruptError
+from honeycomb_gate.memory import Memory, Rule
 from honeycomb_gate.notify import Notifier
 from honeycomb_gate.policy import PolicyEngine
+from honeycomb_gate.redact import sanitize_name
 from honeycomb_gate.registry import APPROVED, PinResult, PinStore, definition_of, scan_definition
 from honeycomb_gate.runs import RunControl
 from honeycomb_gate.tokens import Sighting, TokenRegistry
-from honeycomb_gate.walk import exceeds_depth
+from honeycomb_gate.walk import exceeds_depth, strings_of
 
 SEP = "__"
 MAX_PAGES = 100
@@ -92,6 +96,8 @@ class Run:
     log: EventLog
     paused: bool = False
     scopes: tuple[str, ...] = ("*",)  # tool globs this run may use; decoys are always visible
+    # The last few results this run read, kept so that a trip can learn from them (S5).
+    recent: deque[tuple[str, str]] = field(default_factory=lambda: deque(maxlen=5))
 
     def allows(self, name: str) -> bool:
         return any(fnmatch.fnmatchcase(name.lower(), p.lower()) for p in self.scopes)
@@ -119,6 +125,7 @@ class Gate:
         self.identities = Identities(config.identities_path, KeyRing(config.keys_path))
         self.governor = Governor(self)
         self.baselines = Baselines(config.baselines_path, config.baseline)
+        self.memory = Memory(config.memory_path, config.memory)
         self.inventory = Inventory(config.inventory_path)
         self.http_runs: dict[str, Run] = {}
         self.require_claims = False  # set when serving over HTTP: no token, no run
@@ -331,6 +338,8 @@ class Gate:
         )
         self._best_effort(run, self.identities.revoke, run.id, event_kind)
         self._best_effort(run, run.emit, "identity.revoked", severity="high", decision="revoke")
+        if event_kind != "memory.rule_matched":  # a repeat teaches nothing new
+            self._best_effort(run, self._learn, run, event_kind)
         incident = self._best_effort(run, lambda: self._open_incident(run, incident_for))
         if incident is not None:
             self._spawn(self._notify(run, incident))
@@ -404,12 +413,51 @@ class Gate:
                     details={"incident_id": incident.id, "error": type(exc).__name__},
                 )
 
-    def _inspect_result(self, result: BaseModel) -> tuple[bool, list[Sighting]]:
-        """Size check and honeytoken scan of an upstream result (run in a worker thread)."""
+    def _inspect_result(self, result: BaseModel) -> tuple[bool, list[Sighting], Rule | None]:
+        """Size check, honeytoken scan and learned-rule check of a result (in a worker thread)."""
         payload = result.model_dump(by_alias=True, exclude_none=True)
         if len(json.dumps(payload, default=str)) > MAX_RESULT_CHARS:
-            return True, []
-        return False, self.tokens.find(payload)
+            return True, [], None
+        found = self.tokens.find(payload)
+        rule = None if found else self.memory.match(strings_of(payload, keys=False))
+        return False, found, rule
+
+    def _remember(self, run: Run, label: str, payload: Any) -> None:
+        """Keep what this run just read, in case it turns out to be how an attack got in."""
+        text = "\n".join(strings_of(payload, keys=False))[:50_000]
+        if text:
+            run.recent.append((sanitize_name(label), text))
+
+    def _learn(self, run: Run, reason: str) -> None:
+        for rule in self.memory.learn(run.id, list(run.recent), reason):
+            run.emit(
+                "memory.rule_learned", severity="medium",
+                details={"rule_id": rule.id, "kind": rule.kind, "reason": reason},
+            )  # fmt: skip
+
+    async def _trip_memory(
+        self, run: Run, rule: Rule, label: str, base: dict[str, Any]
+    ) -> types.CallToolResult:
+        """A result matched something learned from an earlier incident."""
+        self.memory.hit(rule.id)
+        details = {"rule_id": rule.id, "kind": rule.kind}
+        if self.config.memory.on_match == "withhold":
+            run.emit("memory.rule_matched", severity="high", decision="withhold",
+                     rule_id=rule.id, details=details, **base)  # fmt: skip
+            return _blocked("This result was withheld by honeycomb-gate.")
+        return await self._trip(
+            run,
+            event_kind="memory.rule_matched",
+            rule_id=rule.id,
+            tool=label,
+            base=base,
+            details=details,
+            args={},
+            incident_for=lambda events: open_memory_incident(
+                run_id=run.id, agent_id=run.agent_id, tool=label, rule_id=rule.id,
+                kind=rule.kind, paused=True, events=events, config_hint=self._config_hint(),
+            ),
+        )  # fmt: skip
 
     async def drain(self, timeout: float = 15.0) -> None:
         """Let pending notifications finish before the process exits."""
@@ -533,6 +581,13 @@ class Gate:
         """Scan something an agent sent or an upstream returned. A planted secret trips the run."""
         too_big = len(json.dumps(payload, default=str)) > MAX_RESULT_CHARS
         found = [] if too_big else await asyncio.to_thread(self.tokens.find, payload)
+        rule = None
+        if where == "result" and not too_big and not found:
+            texts = strings_of(payload, keys=False)
+            rule = await asyncio.to_thread(self.memory.match, texts)
+        if rule is not None:
+            await self._trip_memory(run, rule, label, base)
+            raise MCPError(types.INVALID_REQUEST, "Blocked by honeycomb-gate.")
         if too_big:
             run.emit("call.denied", severity="medium", decision="deny", rule_id="gate",
                           details={"reason": "payload_too_large"}, **base)  # fmt: skip
@@ -580,9 +635,9 @@ class Gate:
         except Exception as exc:
             run.emit("gate.error", severity="high", details={"error": type(exc).__name__}, **base)
             raise MCPError(types.INTERNAL_ERROR, f"The upstream could not {failure}.") from exc
-        await self._vet(
-            run, label, result.model_dump(by_alias=True, exclude_none=True), "result", base
-        )
+        payload = result.model_dump(by_alias=True, exclude_none=True)
+        await self._vet(run, label, payload, "result", base)
+        self._remember(run, label, payload)
         return result
 
     async def list_resources(
@@ -769,11 +824,13 @@ class Gate:
             raise
 
         # 3. Honeytokens in the result: something handed the agent a planted secret. Withhold it.
-        too_big, found = await asyncio.to_thread(self._inspect_result, result)
+        too_big, found, rule = await asyncio.to_thread(self._inspect_result, result)
         if too_big:  # refused unseen, so the agent never receives it; also keeps the scan quick
             return deny("result_too_large", "gate", "medium")
         if found:
             return await self._trip_token(run, found[0], "result", params.name, base, args)
+        if rule is not None:
+            return await self._trip_memory(run, rule, params.name, base)
         if run.paused:  # the run tripped while this call was in flight: its result is withheld
             return deny("run_paused", "run-control", "medium")
         over = self.governor.over_result_cap(result, decision)
@@ -789,6 +846,7 @@ class Gate:
                 "This tool ran, but honeycomb-gate withheld its answer because it was larger "
                 f"than the rule allows ({over}). Do not repeat the call."
             )
+        self._remember(run, params.name, result.model_dump(by_alias=True, exclude_none=True))
         try:  # a baseline problem is logged, and never changes what happens to the call
             answer_size = sum(len(getattr(c, "text", "") or "") for c in result.content)
             for found_dev in self.baselines.observe(
@@ -826,6 +884,7 @@ def check_state(config: GateConfig) -> None:
     # Read every state file now, so a damaged one is reported here, by name, not on a first call.
     PinStore(config.pins_path).entries()
     Baselines.load(config.baselines_path)
+    Memory(config.memory_path, config.memory)
     RunControl(config.runs_path).paused()
     TokenRegistry(config.tokens_path).tokens()
     DecoyBook(config.decoys, list(config.upstreams), config.decoys_path)

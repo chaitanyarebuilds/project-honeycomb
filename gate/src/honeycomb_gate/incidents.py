@@ -216,6 +216,57 @@ def open_token_incident(
     )
 
 
+def open_memory_incident(
+    *,
+    run_id: str,
+    agent_id: str,
+    tool: str,
+    rule_id: str,
+    kind: str,
+    paused: bool,
+    events: list[dict[str, Any]],
+    config_hint: str,
+) -> Incident:
+    tool = sanitize_name(tool)
+    agent_id = sanitize_name(agent_id)
+    what = "a whole text" if kind == "text" else "an instruction sentence"
+    did = (
+        [
+            "Withheld the result, so the agent never saw it.",
+            "Paused the run until a person resumes it, even if the gate is restarted.",
+            f"Retired run identity {run_id}; a resume issues a new one.",
+        ]
+        if paused
+        else ["Withheld the result, so the agent never saw it. The run was left going."]
+    )
+    return Incident(
+        id="inc_" + ulid_like()[:16],
+        severity="high",
+        kind="memory.rule_matched",
+        title=f"Agent '{agent_id}' was handed text from an earlier attack",
+        run_id=run_id,
+        agent_id=agent_id,
+        tool=tool,
+        opened_at=datetime.now(UTC).isoformat(timespec="seconds"),
+        what=f"The result of '{tool}' matched learned rule {rule_id}, which was made from "
+        f"{what} that took part in an earlier incident.",
+        confidence="High. The rule was learned from a confirmed incident, and the text matched "
+        "it exactly once case, spacing and hidden characters are ignored.",
+        actions=did,
+        next_steps=[
+            f"Find out where '{tool}' got this text: it is the same material as last time.",
+            f"Review the run: honeycomb-gate events query --run {run_id} {config_hint}",
+            f"If the rule is wrong: honeycomb-gate memory forget {rule_id} {config_hint}",
+        ]
+        + (
+            [f"Resume only when satisfied: honeycomb-gate runs resume {run_id} {config_hint}"]
+            if paused
+            else []
+        ),
+        evidence=_evidence(events),
+    )
+
+
 def render_text(i: Incident) -> str:
     lines = [
         f"INCIDENT {i.id}  [{i.severity.upper()}]",

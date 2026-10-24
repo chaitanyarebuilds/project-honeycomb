@@ -2,7 +2,7 @@
 
 **An immune system for every network.** Project Honeycomb is an open, early-stage design for an agentic cybersecurity platform modelled on the human immune system.
 
-> **Status: early prototype.** The design, the research and the plan are here, and so are the first working pieces of the Phase 0 gate: an MCP proxy with a tamper-evident event log, tool pinning, decoy tools, honeytokens and incident emails. It is not production software. It is public so it can be challenged. Critique, prior art and contributors are all welcome.
+> **Status: early prototype.** The design, the research and the plan are here, and so is a working Phase 0 gate: an MCP proxy with a tamper-evident event log, tool pinning, a policy engine, decoy tools, honeytokens, signed run tokens, an egress proxy, human approvals, behaviour baselines and memory of past attacks, tested in a Docker lab. It is not production software. It is public so it can be challenged. Critique, prior art and contributors are all welcome.
 
 [Watch the video](https://youtu.be/OLbzQwiVDWs) · [Discuss](../../discussions) · [Contribute](CONTRIBUTING.md) · [Join as a collaborator](COLLABORATOR_FORM_URL)
 
@@ -61,6 +61,26 @@ These are hypotheses to test, not claims.
 2. **The whole loop, with brakes.** Autonomous response is capped by blast-radius limits, quorums, and human approval above set thresholds.
 3. **An immune system for your own AI agents.** A tool-call firewall, per-run identities, default-deny egress, behaviour baselines and decoy skills.
 4. **Built for those left out.** Delivered as a managed service for government offices and small firms, with CERT-In and DPDP reporting built in.
+
+## Try the gate
+
+You need Python 3.12 or newer and [uv](https://docs.astral.sh/uv/). The lab also needs Docker (Docker Desktop with the WSL 2 backend works on Windows).
+
+```
+uv sync
+uv run pytest
+uv run honeycomb-gate run --config policies/example.yaml
+```
+
+The tests take a couple of minutes. The last command serves the gate over stdio, so point an MCP client at it. [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) lists every command, including how to read the event log and answer an approval.
+
+To see it catch attacks, run the lab:
+
+```
+uv run lab-run
+```
+
+It builds the containers, plays six scenarios and tears everything down. The agent sits on a network with no way out, and the gate watches its tools. At the end you should see `lab passed` with every check ticked, and a summary in `lab/results/`. [docs/LAB-RESULTS.md](docs/LAB-RESULTS.md) shows what a run looks like and what we measured.
 
 ## Hard problems
 

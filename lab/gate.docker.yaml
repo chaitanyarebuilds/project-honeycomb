@@ -8,6 +8,8 @@ upstreams:
   crm:
     command: ["python", "/app/lab/targets/crm.py"]
     env: { HC_LAB_MARKER: /state/real_exports.log }
+  wiki:
+    command: ["python", "/app/lab/targets/wiki.py"]
   docs:
     command: ["python", "/app/lab/targets/docs.py"]
     env: { HC_LAB_DOCS: /data/docs }
@@ -30,7 +32,7 @@ decoys:
   count: 1
   vocabulary: [export_all_customer_data]
   placement: crm
-  on_trip: { response: tarpit, tarpit_delay_s: 0.2 }
+  on_trip: { response: tarpit, tarpit_delay_s: 1.0 }
 notify: { email: false }
 http:
   host: 0.0.0.0

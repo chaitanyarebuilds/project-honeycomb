@@ -16,6 +16,7 @@ from pydantic import (
 
 from honeycomb_gate.baseline import BaselineConfig
 from honeycomb_gate.decoys import DecoyConfig
+from honeycomb_gate.memory import MemoryConfig
 from honeycomb_gate.notify import NotifyConfig
 from honeycomb_gate.policy import PolicyConfig
 
@@ -101,6 +102,7 @@ class GateConfig(PolicyConfig):
     deployment: DeploymentConfig = Field(default_factory=DeploymentConfig)
     egress: EgressConfig = Field(default_factory=EgressConfig)
     baseline: BaselineConfig = Field(default_factory=BaselineConfig)
+    memory: MemoryConfig = Field(default_factory=MemoryConfig)
 
     @model_validator(mode="after")
     def _cross_checks(self) -> "GateConfig":
@@ -138,6 +140,10 @@ class GateConfig(PolicyConfig):
     @property
     def keys_path(self) -> Path:
         return self.state_dir / "identity-keys.json"
+
+    @property
+    def memory_path(self) -> Path:
+        return self.state_dir / "memory.json"
 
     @property
     def approvals_dir(self) -> Path:

@@ -188,6 +188,7 @@ flowchart LR
 - `events tail|query|verify`
 - `approvals list|show|approve|deny`
 - `baseline show`
+- `memory list|forget`
 - `posture` (ADR-0004)
 - `version`
 
@@ -246,6 +247,7 @@ These can also be configured:
 - `http`: `host` (default `127.0.0.1`), `port` (8765), `allowed_hosts` (extra Host header values for a container or reverse proxy, matched exactly including the port, so `gate:8765` or `gate:*`) and `max_body_bytes`.
 - `deployment.network_enforced`: what the operator declares about the network. `honeycomb-gate posture` reports it as declared until a lab test writes the proof file.
 - `defaults`: `approval_wait_s` (20), `approval_timeout_s` (120) and `approval_ttl_s` (600).
+- `memory`: `enabled`, `on_match` (`pause` or `withhold`) and `max_rules`.
 - `baseline`: `enabled`, `min_runs`, `k`, `rate_floor` and `samples`.
 - `notify.escalate_after_s` and `notify.escalate_max`.
 - `egress`: `log` (the proxy's JSON lines file), `sources` (source address to agent id) and `poll_s`.
@@ -337,6 +339,8 @@ All services sit on an `internal: true` network.
 
 **Memory for S5:** each incident can produce a learned rule, such as the hash of a poisoned document or a normalised injected phrase. The rule is stored as `memory.rule_learned` and checked against later tool responses.
 
+How it works. When a run trips a decoy or a honeytoken, the gate looks at the last five results that run read. Any result with instruction-like text in it (the same patterns as the tool-description scan: "ignore previous instructions", "do not tell the user", hidden blocks, sensitive file names, exfiltration wording) becomes a rule: the hash of the whole text, and each long instruction sentence in it (40 to 300 characters, because shorter ones would match honest documents). A result with no such text teaches nothing. Every later result from a tool, a resource or a prompt is checked against the rules, ignoring case, spacing and invisible characters. A match is handled before the agent sees the text: with `memory.on_match: pause` (the default) the run is paused and its identity revoked like a decoy trip, with `withhold` only the text is kept back. Either way `memory.rule_matched` is logged and an incident opened. Rules live in `memory.json`, `honeycomb-gate memory list|forget` shows and removes them, and at most 500 are kept.
+
 **Metrics:** time from the malicious step to the trip, steps taken before the stop, attacker time wasted in the tarpit, false positives in S0, and the S5 improvement over S1. `lab-run` writes `lab/results/<timestamp>.json` and a Markdown summary.
 
 ## 9. Milestones
@@ -380,11 +384,11 @@ All services sit on an `internal: true` network.
 
 **M5: memory, lab report and v0.1.0 (weeks 9–10)**
 
-- [ ] Learned rules (S5)
-- [ ] `lab-run` with JSON and Markdown results
-- [ ] `docs/LAB-RESULTS.md` draft
-- [ ] OWASP agentic mapping table filled in
-- [ ] Tag v0.1.0
+- [x] Learned rules (S5)
+- [x] `lab-run` with JSON and Markdown results
+- [x] `docs/LAB-RESULTS.md` draft
+- [x] OWASP agentic mapping table filled in (section 13)
+- [ ] Tag v0.1.0 (after CI is green on the pushed commit)
 
 **v0.1.0 is done when** S0 to S5 pass in CI with the scripted attacker, an outside developer can run the lab from the README in under 30 minutes on Windows (Docker Desktop) or Linux, and every feature has tests that include benign look-alikes.
 
@@ -454,3 +458,20 @@ The owner approved ADR-0001 to 0008 from the architecture review ([program/ARCHI
 - **Rug pull:** a tool's definition changing after it has been trusted.
 - **Tool poisoning:** hidden instructions placed in a tool's description or output.
 - **Indirect prompt injection:** instructions hidden in content the agent reads.
+
+## 13. How the controls map to the OWASP Top 10 for Agentic Applications
+
+The list is the OWASP GenAI Security Project's Top 10 for Agentic Applications 2026 (see [SOURCES.md](SOURCES.md)). "Covered" means a control exists and a test or a lab scenario exercises it. "Partly" and "Not covered" are stated plainly, because the gate only sees what passes through it.
+
+| ID | Risk | What Phase 0 does | Where it is tested | Status |
+| --- | --- | --- | --- | --- |
+| ASI01 | Agent Goal Hijack | Decoy tools and honeytokens catch an agent that has been steered (F5, F6). Learned rules stop a repeat of the same text (S5). Approvals and caps limit what a hijacked agent can do (F10, F4). Egress deny stops the data leaving (F8). | S1, S3, S4, S5 | Covered for hijacks that touch a decoy, a planted credential or known text. A hijack that stays within normal tools is only seen by baselines. |
+| ASI02 | Tool Misuse and Exploitation | Policy deny rules, per-agent scopes, argument matchers, per-minute and size caps, approvals with quorum, and a rate baseline. | S4, `test_policy`, `test_governor` | Covered for tools that go through the gate. |
+| ASI03 | Identity and Privilege Abuse | Gate-minted run tokens, 15 minutes at most, with scopes, revocation on a trip, a registry of agents, strict mode that turns away unknown agents. | `test_identity`, `test_front_door` | Covered. Tokens are symmetric, so only the gate can check them; upstream servers cannot yet. |
+| ASI04 | Agentic Supply Chain | Tool definitions are pinned and a change is quarantined until a person approves the exact hash. Descriptions are scanned. Tools are namespaced per upstream. An upstream gets only the environment we give it. | S2, `test_registry` | Covered for tool definitions. Packages, models and prompts an agent loads on its own are outside the gate. |
+| ASI05 | Unexpected Code Execution | Tools that look like code or shell execution are treated as high impact and fail closed. Approvals can sit in front of them. | `test_policy` | Partly. The gate does not run or sandbox code, and it does not protect the host. |
+| ASI06 | Memory and Context Poisoning | Results, resources and prompts are scanned for planted credentials and checked against learned rules. | S5, `test_memory`, `test_resources_and_prompts` | Partly. The agent's own memory store is not inspected; that audit is planned (ADR-0006). |
+| ASI07 | Insecure Inter-Agent Communication | None in Phase 0. There is no channel between agents here, and the signed signalling bus is Phase 2. | none | Not covered. |
+| ASI08 | Cascading Failures | A trip pauses one run, not the fleet. Caps and rate limits bound a runaway agent. Every control fails closed, and the event log has a second sink. | `test_gate_robustness`, S4 | Partly. There are no run lifetime limits beyond the token's 15 minutes. |
+| ASI09 | Human-Agent Trust Exploitation | An approval request shows the tool, the redacted arguments, the rule and the blast radius, written by the gate and not by the agent. An incident answers five plain questions. | `test_governor`, S4 | Partly. A person can still approve something they didn't understand; quorum raises the bar. |
+| ASI10 | Rogue Agents | Behaviour baselines per agent, an inventory of agents seen, run tokens that expire and can be revoked, pauses that survive a restart, and a hash-chained log that an agent can't edit. | S0, `test_baseline`, `test_events` | Covered for agents that use the gate. An agent that bypasses it is only stopped where the network is closed (posture level L2). |
