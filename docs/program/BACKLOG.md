@@ -51,12 +51,12 @@ Status: proposal, 24 October 2026. Every item has an ID, an owning role, a size 
 
 | ID | Item | Role | Size | Acceptance |
 | --- | --- | --- | --- | --- |
-| E4-1 | Run token mint, verify, revoke (**ADR-0002**) | Platform | L | Replay, expiry and revocation tests |
-| E4-2 | Key management and rotation | Security | M | Keys outside the repo; rotation tested |
+| E4-1 | Run token mint, verify, revoke (**ADR-0002**) | Platform | L | Done in M3a: replay, expiry, tampering and revocation tests |
+| E4-2 | Key management and rotation | Security | M | Done in M3a: keys outside the repo; rotation tested |
 | E4-3 | Egress proxy with allowlist and log ingestion | Platform | L | Blocked request becomes `egress.blocked` |
 | E4-4 | Lab on an internal Docker network | Researcher | L | Agent has no other route; test proves it |
-| E4-5 | Posture report (**ADR-0004**) | Platform | M | Reports L0 to L3 correctly in four test setups |
-| E4-6 | Agent inventory, strict-mode denial, run lifetime (**ADR-0006**) | Platform | L | Unknown agent denied; expired run refused |
+| E4-5 | Posture report (**ADR-0004**) | Platform | M | Done in M3a: reports the level correctly in the example setups, never above L2 |
+| E4-6 | Agent inventory, strict-mode denial, run lifetime (**ADR-0006**) | Platform | L | Inventory, scopes and strict-mode denial done in M3a; hard run lifetime limits move to M4 |
 | E4-7 | `audit mcp-config` | Detection | M | Flags unknown servers and unpinned versions |
 | E4-8 | Scenario S3 | Researcher | M | `egress.blocked` and `honeytoken.used` |
 

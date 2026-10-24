@@ -88,3 +88,20 @@ def test_planting_inside_a_git_repository_fails_from_the_cli(tmp_path: Path) -> 
     assert result.exit_code == 1 and "never be committed" in result.output
     assert not list(repo.glob(".env.old"))
     assert all(t.revoked for t in TokenRegistry(tmp_path / "state" / "tokens.json").tokens())
+
+
+async def test_a_percent_encoded_credential_is_caught_too(tmp_path: Path) -> None:
+    from urllib.parse import quote
+
+    cfg = write_config(tmp_path, email=False)
+    docs = tmp_path / "docs"
+    docs.mkdir(exist_ok=True)
+    plant(cfg, docs)
+    value = TokenRegistry(tmp_path / "state" / "tokens.json").tokens()[0].value
+    async with Client(gate_client_params(cfg)) as agent:
+        out = await agent.call_tool(
+            "docs__read_document", {"name": quote(quote(value, safe=""), safe="")}
+        )
+        assert out.is_error
+    assert "honeytoken.used" in [e["kind"] for e in read_log(tmp_path)]
+    assert value not in (tmp_path / "state" / "events.jsonl").read_text()

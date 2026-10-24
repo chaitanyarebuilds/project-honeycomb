@@ -10,10 +10,12 @@ import base64
 import re
 import secrets
 import string
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote
 
 from honeycomb_gate.locking import FileLock, StateCorruptError, read_json, write_json_atomic
 from honeycomb_gate.walk import strings_of
@@ -67,6 +69,17 @@ class Sighting:
     token_id: str
     kind: str
     placed: list[str]
+
+
+def _unescaped(text: str) -> Iterator[str]:
+    """The text, then the text with percent-escapes undone, up to four layers deep."""
+    yield text
+    for _ in range(4):
+        decoded = unquote(text)
+        if decoded == text:
+            return
+        text = decoded
+        yield text
 
 
 class TokenRegistry:
@@ -150,9 +163,9 @@ class TokenRegistry:
         views = ["\n".join(strings), "\n".join(values), "".join(values)]
         texts: list[str] = []
         for view in views:
-            clean = _INVISIBLE.sub("", view).lower()
-            texts.append(clean)
-            texts.extend(_decoded_runs(view))
+            for seen in _unescaped(view):
+                texts.append(_INVISIBLE.sub("", seen).lower())
+                texts.extend(_decoded_runs(seen))
         return [
             Sighting(t.id, t.kind, t.placed)
             for t in active

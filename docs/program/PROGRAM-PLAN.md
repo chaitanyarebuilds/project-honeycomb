@@ -71,7 +71,7 @@ An item is done when it has code, tests with a malicious example and a benign lo
 | --- | --- | --- |
 | Working repository push | all | Working since 24 October |
 | SMTP account for incident email | M2 notifier | Provided by the owner; kept only in a local `.env`, never in git. Not reachable from the build sandbox, so tested against a local fake mail server and then by the owner |
-| Docker daemon in the build environment | the lab (M2 onward) | The CLI is present; the daemon is untested. We will check at M2 and otherwise run lab CI on GitHub Actions |
+| Docker daemon in the build environment | the lab (M3 onward) | Works. The CLI is installed and we start the daemon by hand with `dockerd`; images pull and internal networks have no route out (checked 25 October). It has to be started again in each new session, or added to the environment's setup script |
 | A GitHub account or two for review | independent review | Needed from the owner |
 | An outside security reviewer (a few hours per gate) | WS-E | A community developer will review the threat model |
 | A webhook endpoint for tests | M2 and M4 notifications | Local test receiver in the lab |

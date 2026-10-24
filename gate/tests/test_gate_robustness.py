@@ -114,7 +114,7 @@ async def test_a_call_that_was_waiting_when_the_run_paused_is_not_forwarded(tmp_
 
     async def fetch_then_pause(upstream: str, *, max_age: float) -> dict[str, types.Tool]:
         tools = await real_fetch(upstream, max_age=max_age)
-        gate.paused = True  # another call tripped while this one was in flight
+        gate.default.paused = True  # another call tripped while this one was in flight
         return tools
 
     gate._fetch = fetch_then_pause  # type: ignore[method-assign]
@@ -128,7 +128,7 @@ async def test_a_second_trip_while_paused_is_evidence_not_a_second_incident(tmp_
         async def call_tool(
             self, name: str, arguments: dict[str, Any] | None
         ) -> types.CallToolResult:
-            gate.paused = True  # a concurrent call tripped first
+            gate.default.paused = True  # a concurrent call tripped first
             return types.CallToolResult(content=[types.TextContent(type="text", text=token.value)])
 
     client = Leaky({None: types.ListToolsResult(tools=[tool()])})
@@ -199,7 +199,7 @@ async def test_a_trip_pauses_the_run_even_if_the_log_cannot_be_written(tmp_path:
     gate.log.emit = full_disk  # type: ignore[method-assign]
     decoy = types.CallToolRequestParams(name="sample__export_all_customer_data", arguments={})
     await gate.call_tool(SimpleNamespace(), decoy)  # type: ignore[arg-type]
-    assert gate.paused  # contained in memory, whatever the disk does
+    assert gate.default.paused  # contained in memory, whatever the disk does
     runs = json.loads((tmp_path / "state" / "runs.json").read_text())
     assert [r["status"] for r in runs.values()] == ["paused"]  # and still recorded on disk
     assert list((tmp_path / "state" / "incidents").glob("inc_*.json"))  # and the incident exists
@@ -232,8 +232,8 @@ async def test_deleting_runs_json_does_not_unpause_after_a_restart(tmp_path: Pat
     (tmp_path / "state" / "runs.json").unlink()  # someone removes the pause record
 
     second = make_gate(tmp_path, client, decoys=DECOY)
-    second.inherit_pause()  # the log still says that run was paused and never resumed
-    assert second.paused
+    second.inherit_pause(second.default)  # the log still says that run was paused and never resumed
+    assert second.default.paused
     runs = json.loads((tmp_path / "state" / "runs.json").read_text())
     assert [r["status"] for r in runs.values()].count("paused") == 1
 
@@ -306,3 +306,20 @@ async def test_a_listing_that_never_answers_times_out_and_is_reported(tmp_path: 
     assert any(
         e["kind"] == "gate.error" and e["details"]["error"] == "TimeoutError" for e in events(gate)
     )
+
+
+async def test_a_result_that_arrives_after_the_run_tripped_is_withheld(tmp_path: Path) -> None:
+    client = FakeClient({None: types.ListToolsResult(tools=[tool()])})
+    gate = make_gate(tmp_path, client)
+    real_call = client.call_tool
+
+    async def call_then_trip(name: str, arguments: dict[str, Any] | None) -> types.CallToolResult:
+        result = await real_call(name, arguments)
+        gate.default.paused = True  # a decoy tripped on this run while the call was running
+        return result
+
+    client.call_tool = call_then_trip  # type: ignore[method-assign]
+    params = types.CallToolRequestParams(name="sample__t", arguments={})
+    result = await gate.call_tool(SimpleNamespace(), params)  # type: ignore[arg-type]
+    assert result.is_error and "ok" not in str(result.content)
+    assert not [e for e in events(gate) if e["kind"] == "call.completed"]

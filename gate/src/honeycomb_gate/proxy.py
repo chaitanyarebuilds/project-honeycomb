@@ -7,18 +7,23 @@ engine, and the hash-chained event log. Upstream tool annotations are untrusted 
 
 import asyncio
 import contextlib
+import fnmatch
 import hashlib
 import json
 import time
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AsyncExitStack
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
+from urllib.parse import quote, unquote, urlsplit
 
 import mcp.types as types
-from mcp import Client
+from mcp import Client, MCPError
 from mcp.client.stdio import StdioServerParameters
 from mcp.server import Server, ServerRequestContext
 from mcp.server.stdio import stdio_server
+from pydantic import BaseModel
 
 from honeycomb_gate import __version__
 from honeycomb_gate.config import GateConfig
@@ -33,6 +38,7 @@ from honeycomb_gate.events import (
     unresumed_pauses,
     verify_chain,
 )
+from honeycomb_gate.identity import Claims, Identities, Inventory, KeyRing
 from honeycomb_gate.incidents import (
     Incident,
     IncidentStore,
@@ -52,12 +58,44 @@ MAX_PAGES = 100
 MAX_ARGS_CHARS = 4_000_000  # larger calls are refused, so no scan can be padded past a cap
 MAX_RESULT_CHARS = 8_000_000  # the same for what comes back
 MAX_DEPTH = 100  # nesting deeper than any real tool call
+RESOURCE_SCHEME = "hc"  # resources come out as hc://<upstream>/<escaped original uri>
 
 
 def _blocked(message: str) -> types.CallToolResult:
     return types.CallToolResult(
         content=[types.TextContent(type="text", text=message)], is_error=True
     )
+
+
+def _gate_uri(upstream: str, uri: str) -> str:
+    return f"{RESOURCE_SCHEME}://{upstream}/{quote(str(uri), safe='')}"
+
+
+def _split_gate_uri(uri: str) -> tuple[str, str]:
+    try:
+        parts = urlsplit(uri)
+    except ValueError:
+        return "", ""
+    if parts.scheme != RESOURCE_SCHEME:
+        return "", ""
+    return parts.netloc, unquote(parts.path[1:])
+
+
+@dataclass
+class Run:
+    """One agent connection: its id, who it is, and whether it is paused."""
+
+    id: str
+    agent_id: str
+    log: EventLog
+    paused: bool = False
+    scopes: tuple[str, ...] = ("*",)  # tool globs this run may use; decoys are always visible
+
+    def allows(self, name: str) -> bool:
+        return any(fnmatch.fnmatchcase(name.lower(), p.lower()) for p in self.scopes)
+
+    def emit(self, kind: str, **fields: Any) -> dict[str, Any]:
+        return self.log.emit(kind, run_id=self.id, agent_id=self.agent_id, **fields)
 
 
 class Gate:
@@ -75,76 +113,69 @@ class Gate:
         self.incidents = IncidentStore(config.incidents_dir)
         self.notifier = Notifier(config.notify)
         self.decoys: DecoyBook | None = None  # built once the upstreams are known
-        self.paused = False
+        self.default = Run(log.run_id, config.agent_id, log)  # the stdio connection
+        self.identities = Identities(config.identities_path, KeyRing(config.keys_path))
+        self.inventory = Inventory(config.inventory_path)
+        self.http_runs: dict[str, Run] = {}
+        self.require_claims = False  # set when serving over HTTP: no token, no run
         self.config_path: Path | None = None
         self._background: set[asyncio.Task[None]] = set()
 
     # -- upstream definitions -------------------------------------------------------------
 
+    async def _collect(
+        self, upstream: str, fetch: Callable[..., Awaitable[Any]], field: str
+    ) -> list[Any]:
+        """Walk every page of an upstream list call, with a timeout and loop guards."""
+        items: list[Any] = []
+        cursor: str | None = None
+        seen: set[str] = set()
+        for _ in range(MAX_PAGES):
+            page = await asyncio.wait_for(fetch(cursor=cursor), self.config.call_timeout_s)
+            items.extend(getattr(page, field))
+            cursor = page.next_cursor
+            if not cursor:
+                return items
+            if cursor in seen:  # a hostile upstream repeating a cursor must not hang the gate
+                raise RuntimeError(f"upstream {upstream!r} repeated a pagination cursor")
+            seen.add(cursor)
+        raise RuntimeError(f"upstream {upstream!r} returned more than {MAX_PAGES} pages")
+
     async def _fetch(self, upstream: str, *, max_age: float) -> dict[str, types.Tool]:
         cached = self._defs.get(upstream)
         if cached is not None and time.monotonic() - cached[0] <= max_age:
             return cached[1]
-        tools: dict[str, types.Tool] = {}
-        cursor: str | None = None
-        seen: set[str] = set()
-        for _ in range(MAX_PAGES):
-            page = await asyncio.wait_for(
-                self.clients[upstream].list_tools(cursor=cursor), self.config.call_timeout_s
-            )
-            tools.update({t.name: t for t in page.tools})
-            cursor = page.next_cursor
-            if not cursor:
-                break
-            if cursor in seen:  # a hostile upstream repeating a cursor must not hang the gate
-                raise RuntimeError(f"upstream {upstream!r} repeated a pagination cursor")
-            seen.add(cursor)
-        else:
-            raise RuntimeError(f"upstream {upstream!r} returned more than {MAX_PAGES} pages")
+        client = self.clients[upstream]
+        tools = {t.name: t for t in await self._collect(upstream, client.list_tools, "tools")}
         self._defs[upstream] = (time.monotonic(), tools)
         return tools
 
-    def _check_pin(self, upstream: str, tool: types.Tool) -> PinResult:
+    def _check_pin(self, run: Run, upstream: str, tool: types.Tool) -> PinResult:
         """Pin the definition, record any resulting events, and flag odd descriptions."""
         definition = definition_of(tool)
         result = self.pins.check(upstream, tool.name, definition, strict=self.strict)
         h = result.current_hash
         name = f"{upstream}{SEP}{tool.name}"
         for kind, details in result.earlier:
-            self.log.emit(kind, upstream=upstream, tool=name, decision="approve", details=details)
-        if result.event == "tool.definition_changed":
-            self.log.emit(
-                "tool.definition_changed",
-                severity="high",
-                upstream=upstream,
-                tool=name,
-                decision="quarantine",
-                details={"previous_hash": result.previous_hash, "current_hash": h},
-            )
-        elif result.event == "tool.unapproved":
-            self.log.emit(
-                "tool.unapproved",
-                severity="low",
-                upstream=upstream,
-                tool=name,
-                details={"current_hash": h},
-            )
-        elif result.event == "tool.approved":
-            self.log.emit(
-                "tool.approved",
-                upstream=upstream,
-                tool=name,
-                decision="approve",
-                details={**result.details, "hash": h},
-            )
-        elif result.event == "tool.pinned":
-            self.log.emit("tool.pinned", upstream=upstream, tool=name, details={"hash": h})
+            run.emit(kind, upstream=upstream, tool=name, decision="approve", details=details)
+        extra: dict[str, dict[str, Any]] = {
+            "tool.definition_changed": {
+                "severity": "high",
+                "decision": "quarantine",
+                "details": {"previous_hash": result.previous_hash, "current_hash": h},
+            },
+            "tool.unapproved": {"severity": "low", "details": {"current_hash": h}},
+            "tool.approved": {"decision": "approve", "details": {**result.details, "hash": h}},
+            "tool.pinned": {"details": {"hash": h}},
+        }
+        if result.event in extra:
+            run.emit(result.event, upstream=upstream, tool=name, **extra[result.event])
         key = (upstream, tool.name, h)
         if key not in self._flagged:
             finding = scan_definition(definition)
             if finding.suspicious:
                 self._flagged.add(key)
-                self.log.emit(
+                run.emit(
                     "tool.suspicious_description",
                     severity="medium",
                     upstream=upstream,
@@ -155,39 +186,71 @@ class Gate:
 
     # -- run control, decoys and tokens ----------------------------------------------------
 
+    def _resolve(self, ctx: ServerRequestContext[Any]) -> Run:
+        """Which run is asking. Over stdio there is one connection, so one run."""
+        request = getattr(ctx, "request", None)
+        claims: Claims | None = request.scope.get("honeycomb_claims") if request else None
+        if claims is None:
+            if self.require_claims:  # the front door should have stopped this already
+                raise MCPError(types.INVALID_REQUEST, "A run token is required.")
+            return self.default
+        run = self.http_runs.get(claims.run_id)
+        if run is None:
+            run = Run(claims.run_id, claims.agent_id, self.log, scopes=claims.scopes)
+            self.http_runs[claims.run_id] = run
+            self._announce(run, claims)  # if this fails, the next request tries again
+        return run
+
+    def _announce(self, run: Run, claims: Claims) -> None:
+        """First request of a run that came in with a token: note the agent, log the run."""
+        first = self.inventory.note_run(run.agent_id)
+        entry = self.identities.get(run.id) or {}
+        before = entry.get("resumed_from")
+        run.emit("session.started", details={"front_door": "http", "scopes": list(run.scopes)})
+        run.emit("identity.issued", details={"expires": claims.expires, "previous_run_id": before})
+        if run.agent_id not in self.config.agents:
+            run.emit(
+                "agent.unknown",
+                severity="medium",
+                details={"first_sighting": first, "mode": self.config.mode},
+            )
+        if before:
+            run.emit("session.resumed", severity="medium", details={"previous_run_id": before})
+
     def setup_decoys(self) -> None:
         self.decoys = DecoyBook(
             self.config.decoys, list(self.config.upstreams), self.config.decoys_path
         )
 
-    def _check_resume(self) -> None:
+    def _check_resume(self, run: Run) -> None:
         """If an operator asked to resume the paused run, retire its identity and mint a new one."""
-        if not self.paused:
+        if not run.paused or run is not self.default:  # token runs get a new token instead
             return
-        old = self.log.run_id
+        old = run.id
         if not self.runs.resume_requested(old):  # cheap read first: no lock on every call
             return
         new = new_run_id()
         entry = self.runs.take_resume(old, new)
         if entry is None:
             return
-        self.paused = False
-        self.log.run_id = new
-        self.log.emit(
+        run.paused = False
+        run.id = new
+        run.emit(
             "identity.issued",
             severity="medium",
             decision="resume",
             details={"previous_run_id": old, "approved_by": entry.get("resume_requested_by")},
         )
-        self.log.emit("session.resumed", severity="medium", details={"previous_run_id": old})
+        run.emit("session.resumed", severity="medium", details={"previous_run_id": old})
 
-    def inherit_pause(self) -> None:
+    def inherit_pause(self, run: Run) -> None:
         """A gate that restarts while a run is paused starts paused: restarting is not a resume."""
-        lost = [r for r in unresumed_pauses(self.log.path) if r != self.log.run_id]
-        previous = self.runs.inherit(self.log.run_id, lost)
+        token_runs = set(self.identities.all())  # these stay revoked; an operator resumes them
+        lost = [r for r in unresumed_pauses(self.log.path) if r != run.id and r not in token_runs]
+        previous = self.runs.inherit(run.id, lost, skip=token_runs)
         if previous:
-            self.paused = True
-            self.log.emit(
+            run.paused = True
+            run.emit(
                 "session.paused",
                 severity="high",
                 decision="pause",
@@ -195,20 +258,20 @@ class Gate:
             )
 
     def _config_hint(self) -> str:
-        return f"--config {self.config_path}" if getattr(self, "config_path", None) else ""
+        return f"--config {self.config_path}" if self.config_path else ""
 
-    def _run_events(self) -> list[dict[str, Any]]:
+    def _run_events(self, run: Run) -> list[dict[str, Any]]:
         db = self.log.path.with_suffix(".sqlite3")
         if not db.exists():
             return []
-        return query_events(db, run_id=self.log.run_id, limit=15)
+        return query_events(db, run_id=run.id, limit=15)
 
     def _tarpit_credential(self, tool: str, args: dict[str, Any] | None) -> str:
         """A stable fake credential for credential-like decoys, itself a registered honeytoken."""
         key = (
             "tarpit:"
             + hashlib.sha256(
-                f"{tool}|{json.dumps(args or {}, sort_keys=True)}".encode()
+                f"{tool}|{json.dumps(args or {}, sort_keys=True, default=str)}".encode()
             ).hexdigest()[:16]
         )
         for t in self.tokens.tokens():
@@ -218,6 +281,7 @@ class Gate:
 
     async def _trip(
         self,
+        run: Run,
         *,
         event_kind: str,
         rule_id: str,
@@ -232,12 +296,13 @@ class Gate:
         Each step stands on its own: if the disk is full and one write fails, the others still
         happen, and the run stays paused.
         """
-        first = not self.paused
-        self.paused = True  # in memory first: nothing below can undo it
+        first = not run.paused
+        run.paused = True  # in memory first: nothing below can undo it
         if first:
-            self._best_effort(self.runs.pause, self.log.run_id, event_kind, tool)
+            self._best_effort(run, self.runs.pause, run.id, event_kind, tool)
         self._best_effort(
-            self.log.emit,
+            run,
+            run.emit,
             event_kind,
             severity="critical",
             decision="trip",
@@ -248,32 +313,35 @@ class Gate:
         if not first:  # a second trip while paused is evidence, not a second incident
             return _blocked("This tool call was blocked by honeycomb-gate.")
         self._best_effort(
-            self.log.emit,
+            run,
+            run.emit,
             "session.paused",
             severity="high",
             decision="pause",
             details={"reason": event_kind},
         )
-        self._best_effort(self.log.emit, "identity.revoked", severity="high", decision="revoke")
-        incident = self._best_effort(lambda: self._open_incident(incident_for))
+        self._best_effort(run, self.identities.revoke, run.id, event_kind)
+        self._best_effort(run, run.emit, "identity.revoked", severity="high", decision="revoke")
+        incident = self._best_effort(run, lambda: self._open_incident(run, incident_for))
         if incident is not None:
-            self._spawn(self._notify(incident))
+            self._spawn(self._notify(run, incident))
         return await self._trip_response(tool, args)
 
-    def _best_effort(self, fn: Any, *args: Any, **kwargs: Any) -> Any:
+    def _best_effort(self, run: Run, fn: Any, *args: Any, **kwargs: Any) -> Any:
         """Run a step that must not stop the others; if it fails, try to leave a trace."""
         try:
             return fn(*args, **kwargs)
         except Exception as exc:
             with contextlib.suppress(Exception):
-                self.log.emit("gate.error", severity="high", details={"error": type(exc).__name__})
+                run.emit("gate.error", severity="high", details={"error": type(exc).__name__})
             return None
 
-    def _open_incident(self, incident_for: Any) -> Incident:
-        incident: Incident = incident_for(self._run_events())
+    def _open_incident(self, run: Run, incident_for: Any) -> Incident:
+        incident: Incident = incident_for(self._run_events(run))
         self.incidents.save(incident)
         self._best_effort(
-            self.log.emit,
+            run,
+            run.emit,
             "incident.opened",
             severity="critical",
             details={"incident_id": incident.id, "title": incident.title},
@@ -298,18 +366,18 @@ class Gate:
         self._background.add(task)
         task.add_done_callback(self._background.discard)
 
-    async def _notify(self, incident: Incident) -> None:
+    async def _notify(self, run: Run, incident: Incident) -> None:
         try:
             key = f"{incident.kind}|{incident.tool}|{incident.run_id}"
             if self.notifier.is_duplicate(key, time.monotonic()):
-                self.log.emit("incident.deduplicated", details={"incident_id": incident.id})
+                run.emit("incident.deduplicated", details={"incident_id": incident.id})
                 return
             sent: list[dict[str, str]] = []
             for result in await self.notifier.send(incident):
                 sent.append(
                     {"channel": result.channel, "ok": str(result.ok), "error": result.error}
                 )
-                self.log.emit(
+                run.emit(
                     "incident.notified" if result.ok else "notify.failed",
                     severity="info" if result.ok else "medium",
                     details={
@@ -321,13 +389,13 @@ class Gate:
             self.incidents.add_notifications(incident.id, sent)
         except Exception as exc:  # a lost notification must at least leave a trace
             with contextlib.suppress(Exception):  # if the log itself is gone, nothing more to do
-                self.log.emit(
+                run.emit(
                     "notify.failed",
                     severity="high",
                     details={"incident_id": incident.id, "error": type(exc).__name__},
                 )
 
-    def _inspect_result(self, result: types.CallToolResult) -> tuple[bool, list[Sighting]]:
+    def _inspect_result(self, result: BaseModel) -> tuple[bool, list[Sighting]]:
         """Size check and honeytoken scan of an upstream result (run in a worker thread)."""
         payload = result.model_dump(by_alias=True, exclude_none=True)
         if len(json.dumps(payload, default=str)) > MAX_RESULT_CHARS:
@@ -340,9 +408,16 @@ class Gate:
             await asyncio.wait(self._background, timeout=timeout)
 
     async def _trip_token(
-        self, hit: Sighting, where: str, tool: str, base: dict[str, Any], args: dict[str, Any]
+        self,
+        run: Run,
+        hit: Sighting,
+        where: str,
+        tool: str,
+        base: dict[str, Any],
+        args: dict[str, Any],
     ) -> types.CallToolResult:
         return await self._trip(
+            run,
             event_kind="honeytoken.used",
             rule_id="honeytoken-default",
             tool=tool,
@@ -350,8 +425,8 @@ class Gate:
             details={"honeytoken_id": hit.token_id, "kind": hit.kind, "where": where},
             args=args,
             incident_for=lambda events: open_token_incident(
-                run_id=self.log.run_id,
-                agent_id=self.config.agent_id,
+                run_id=run.id,
+                agent_id=run.agent_id,
                 tool=tool,
                 token_id=hit.token_id,
                 kind=hit.kind,
@@ -367,9 +442,10 @@ class Gate:
     async def list_tools(
         self, ctx: ServerRequestContext[Any], params: types.PaginatedRequestParams | None
     ) -> types.ListToolsResult:
-        self._check_resume()
-        if self.paused:
-            self.log.emit("tools.listed", details={"visible": 0, "hidden": 0, "paused": True})
+        run = self._resolve(ctx)
+        self._check_resume(run)
+        if run.paused:
+            run.emit("tools.listed", details={"visible": 0, "hidden": 0, "paused": True})
             return types.ListToolsResult(tools=[])
         visible: list[types.Tool] = []
         real_names: set[str] = set()
@@ -380,9 +456,13 @@ class Gate:
                 for tool in tools:
                     name = f"{upstream}{SEP}{tool.name}"
                     real_names.add(name)
-                    pin = self._check_pin(upstream, tool)
+                    pin = self._check_pin(run, upstream, tool)
                     decision = self.policy.evaluate(upstream, name, None)
-                    if pin.status != APPROVED or (decision.action == "deny" and decision.hide):
+                    if (
+                        pin.status != APPROVED
+                        or not run.allows(name)
+                        or (decision.action == "deny" and decision.hide)
+                    ):
                         hidden += 1
                         continue
                     # Metadata and icons are not pinned, so they are not forwarded.
@@ -390,7 +470,7 @@ class Gate:
                         tool.model_copy(update={"name": name, "meta": None, "icons": None})
                     )
             except Exception as exc:  # fail closed for this upstream only, and say so
-                self.log.emit(
+                run.emit(
                     "gate.error",
                     severity="high",
                     upstream=upstream,
@@ -400,13 +480,13 @@ class Gate:
         if self.decoys is not None and self.decoys.names:
             decoy_tools, skipped = self.decoys.tools(real_names)
             for name in skipped:
-                self.log.emit(
+                run.emit(
                     "decoy.collision", severity="medium", tool=name,
                     details={"note": "a real tool has this name, so the decoy was left out"},
                 )  # fmt: skip
             visible.extend(decoy_tools)
             decoy_count = len(decoy_tools)
-        self.log.emit(
+        run.emit(
             "tools.listed",
             details={
                 "visible": len(visible) - decoy_count,
@@ -416,18 +496,180 @@ class Gate:
         )
         return types.ListToolsResult(tools=visible)
 
+    # -- resources and prompts: passed through, logged and scanned, never trusted -------------
+
+    def _offers(self, upstream: str, what: str) -> bool:
+        caps = getattr(self.clients[upstream], "server_capabilities", None)
+        return caps is not None and getattr(caps, what, None) is not None
+
+    def _refuse(self, run: Run, rule_id: str, label: str, reason: str, message: str) -> NoReturn:
+        run.emit(
+            "call.denied", severity="medium", decision="deny", rule_id=rule_id,
+            tool=label, details={"reason": reason},
+        )  # fmt: skip
+        raise MCPError(types.INVALID_REQUEST, f"Blocked by honeycomb-gate: {message}.")
+
+    def _refuse_if_paused(self, run: Run, what: str) -> None:
+        self._check_resume(run)
+        if run.paused:
+            self._refuse(run, "run-control", what, "run_paused", "the run is paused")
+
+    def _require_scope(self, run: Run, scope_name: str, label: str) -> None:
+        if not run.allows(scope_name):
+            self._refuse(run, "scopes", label, "out_of_scope", "out of scope")
+
+    async def _vet(
+        self, run: Run, label: str, payload: Any, where: str, base: dict[str, Any]
+    ) -> None:
+        """Scan something an agent sent or an upstream returned. A planted secret trips the run."""
+        too_big = len(json.dumps(payload, default=str)) > MAX_RESULT_CHARS
+        found = [] if too_big else await asyncio.to_thread(self.tokens.find, payload)
+        if too_big:
+            run.emit("call.denied", severity="medium", decision="deny", rule_id="gate",
+                          details={"reason": "payload_too_large"}, **base)  # fmt: skip
+        elif found:
+            await self._trip_token(run, found[0], where, label, base, {})
+        if too_big or found:
+            raise MCPError(types.INVALID_REQUEST, "Blocked by honeycomb-gate.")
+
+    async def _upstream_lists(
+        self, run: Run, what: str, field: str, call: str, rename: Callable[[str, Any], Any]
+    ) -> list[Any]:
+        out: list[Any] = []
+        for upstream in self.clients:
+            if not self._offers(upstream, what):
+                continue
+            fetch = getattr(self.clients[upstream], call)
+            try:
+                items = await self._collect(upstream, fetch, field)
+            except Exception as exc:
+                run.emit(
+                    "gate.error",
+                    severity="high",
+                    upstream=upstream,
+                    details={"error": type(exc).__name__, "while": f"listing {what}"},
+                )
+                continue
+            out.extend(rename(upstream, item) for item in items)
+        return out
+
+    async def _passthrough[R: BaseModel](
+        self,
+        run: Run,
+        label: str,
+        request: Any,
+        base: dict[str, Any],
+        kind: str,
+        call: Callable[[], Awaitable[R]],
+        failure: str,
+    ) -> R:
+        """Vet the request, log it, make the upstream call, then vet what came back."""
+        await self._vet(run, label, request, "arguments", base)
+        run.emit(kind, decision="allow", **base)
+        try:
+            result = await asyncio.wait_for(call(), self.config.call_timeout_s)
+        except Exception as exc:
+            run.emit("gate.error", severity="high", details={"error": type(exc).__name__}, **base)
+            raise MCPError(types.INTERNAL_ERROR, f"The upstream could not {failure}.") from exc
+        await self._vet(
+            run, label, result.model_dump(by_alias=True, exclude_none=True), "result", base
+        )
+        return result
+
+    async def list_resources(
+        self, ctx: ServerRequestContext[Any], params: types.PaginatedRequestParams | None
+    ) -> types.ListResourcesResult:
+        run = self._resolve(ctx)
+        self._check_resume(run)
+        resources: list[types.Resource] = []
+        if not run.paused:
+            resources = await self._upstream_lists(
+                run,
+                "resources", "resources", "list_resources",
+                lambda up, r: r.model_copy(
+                    update={"uri": _gate_uri(up, r.uri), "meta": None, "icons": None}
+                ),
+            )  # fmt: skip
+        resources = [
+            r for r in resources if run.allows(f"{_split_gate_uri(r.uri)[0]}{SEP}resources/read")
+        ]
+        run.emit("resource.listed", details={"count": len(resources), "paused": run.paused})
+        return types.ListResourcesResult(resources=resources)
+
+    async def read_resource(
+        self, ctx: ServerRequestContext[Any], params: types.ReadResourceRequestParams
+    ) -> types.ReadResourceResult:
+        run = self._resolve(ctx)
+        self._refuse_if_paused(run, "resources/read")
+        upstream, original = _split_gate_uri(params.uri)
+        if upstream not in self.clients:
+            raise MCPError(types.INVALID_PARAMS, "Unknown resource.")
+        self._require_scope(run, f"{upstream}{SEP}resources/read", "resources/read")
+        shown = {"uri": self.tokens.mask(params.uri)}
+        base: dict[str, Any] = {
+            "upstream": upstream,
+            "tool": "resources/read",
+            "args_redacted": shown,
+        }
+        result = await self._passthrough(
+            run, "resources/read", params.uri, base, "resource.read",
+            lambda: self.clients[upstream].read_resource(original), "read that resource",
+        )  # fmt: skip
+        for item in result.contents:
+            item.uri = _gate_uri(upstream, item.uri)
+            item.meta = None
+        return result
+
+    async def list_prompts(
+        self, ctx: ServerRequestContext[Any], params: types.PaginatedRequestParams | None
+    ) -> types.ListPromptsResult:
+        run = self._resolve(ctx)
+        self._check_resume(run)
+        prompts: list[types.Prompt] = []
+        if not run.paused:
+            prompts = await self._upstream_lists(
+                run,
+                "prompts", "prompts", "list_prompts",
+                lambda up, p: p.model_copy(
+                    update={"name": f"{up}{SEP}{p.name}", "meta": None, "icons": None}
+                ),
+            )  # fmt: skip
+        prompts = [p for p in prompts if run.allows(p.name)]
+        run.emit("prompt.listed", details={"count": len(prompts), "paused": run.paused})
+        return types.ListPromptsResult(prompts=prompts)
+
+    async def get_prompt(
+        self, ctx: ServerRequestContext[Any], params: types.GetPromptRequestParams
+    ) -> types.GetPromptResult:
+        run = self._resolve(ctx)
+        self._refuse_if_paused(run, "prompts/get")
+        upstream, _, name = params.name.partition(SEP)
+        if upstream not in self.clients or not name:
+            raise MCPError(types.INVALID_PARAMS, "Unknown prompt.")
+        self._require_scope(run, params.name, "prompts/get")
+        args = params.arguments or {}
+        shown = self.tokens.mask({"name": params.name, "arguments": args})
+        base = {"upstream": upstream, "tool": "prompts/get", "args_redacted": shown}
+        result = await self._passthrough(
+            run, "prompts/get", {"name": params.name, "arguments": args}, base, "prompt.fetched",
+            lambda: self.clients[upstream].get_prompt(name, args), "return that prompt",
+        )  # fmt: skip
+        result.meta = None
+        return result
+
     async def call_tool(
         self, ctx: ServerRequestContext[Any], params: types.CallToolRequestParams
     ) -> types.CallToolResult:
+        run = self._resolve(ctx)
         started = time.monotonic()
-        self._check_resume()
+        self._check_resume(run)
         args = params.arguments or {}
         upstream, _, tool_name = params.name.partition(SEP)
         safe_name = self.tokens.mask(params.name)  # a token could be smuggled in the tool name
         base: dict[str, Any] = {"upstream": self.tokens.mask(upstream), "tool": safe_name}
 
         def deny(reason: str, rule_id: str = "gate", severity: str = "low") -> types.CallToolResult:
-            self.log.emit(
+            run.emit(
                 "call.denied",
                 severity=severity,
                 decision="deny",
@@ -445,7 +687,7 @@ class Gate:
             return deny("unreadable_arguments", "gate", "medium")
         base["args_digest"] = digest(params.arguments)
         base["args_redacted"] = self.tokens.mask(args)  # honeytoken values never reach the log
-        if self.paused:
+        if run.paused:
             return deny("run_paused", "run-control", "medium")
         if size > MAX_ARGS_CHARS:
             return deny("payload_too_large", "gate", "medium")
@@ -453,6 +695,7 @@ class Gate:
         # 1. Decoys: no legitimate run ever calls one. The call is never forwarded.
         if self.decoys is not None and self.decoys.is_decoy(params.name):
             return await self._trip(
+                run,
                 event_kind="decoy.tripped",
                 rule_id="decoy-default",
                 tool=safe_name,
@@ -460,8 +703,8 @@ class Gate:
                 details={"decoy": tool_name},
                 args=args,
                 incident_for=lambda events: open_decoy_incident(
-                    run_id=self.log.run_id,
-                    agent_id=self.config.agent_id,
+                    run_id=run.id,
+                    agent_id=run.agent_id,
                     tool=params.name,
                     events=events,
                     config_hint=self._config_hint(),
@@ -471,8 +714,10 @@ class Gate:
         # 2. Honeytokens in the arguments: the agent is trying to use or pass on a planted secret.
         seen = await asyncio.to_thread(self.tokens.find, {"tool": params.name, "arguments": args})
         if seen:
-            return await self._trip_token(seen[0], "arguments", safe_name, base, args)
+            return await self._trip_token(run, seen[0], "arguments", safe_name, base, args)
 
+        if not run.allows(params.name):
+            return deny("out_of_scope", "scopes", "medium")
         if upstream not in self.clients or not tool_name:
             return deny("unknown_tool")
         try:
@@ -480,25 +725,23 @@ class Gate:
             live = tools.get(tool_name)
             if live is None:
                 return deny("unknown_tool")
-            pin = self._check_pin(upstream, live)
+            pin = self._check_pin(run, upstream, live)
             if pin.status != APPROVED:
                 return deny(pin.status, "pinning", "medium")
             decision = self.policy.evaluate(upstream, params.name, args)
             if decision.action == "deny":
                 return deny(decision.reason, decision.rule_id)
-            if self.paused:  # another call tripped while this one was waiting: do not forward
+            if run.paused:  # another call tripped while this one was waiting: do not forward
                 return deny("run_paused", "run-control", "medium")
             # Record the decision before the action: if the log cannot be written, the call
             # does not happen (fail closed on evidence).
-            self.log.emit("call.allowed", decision="allow", rule_id=decision.rule_id, **base)
+            run.emit("call.allowed", decision="allow", rule_id=decision.rule_id, **base)
             result = await asyncio.wait_for(
                 self.clients[upstream].call_tool(tool_name, params.arguments),
                 self.config.call_timeout_s,
             )
         except Exception as exc:
-            self.log.emit(
-                "gate.error", severity="high", details={"error": type(exc).__name__}, **base
-            )
+            run.emit("gate.error", severity="high", details={"error": type(exc).__name__}, **base)
             if self.strict or self.policy.is_high_impact(params.name):
                 return _blocked("This tool call was blocked by honeycomb-gate (internal error).")
             raise
@@ -508,8 +751,10 @@ class Gate:
         if too_big:  # refused unseen, so the agent never receives it; also keeps the scan quick
             return deny("result_too_large", "gate", "medium")
         if found:
-            return await self._trip_token(found[0], "result", params.name, base, args)
-        self.log.emit(
+            return await self._trip_token(run, found[0], "result", params.name, base, args)
+        if run.paused:  # the run tripped while this call was in flight: its result is withheld
+            return deny("run_paused", "run-control", "medium")
+        run.emit(
             "call.completed",
             upstream=upstream,
             tool=params.name,
@@ -549,17 +794,28 @@ def check_state(config: GateConfig) -> None:
         )
 
 
-async def serve(config: GateConfig, config_path: Path | None = None) -> None:
-    check_state(config)
-    log = EventLog(config.event_log_path, agent_id=config.agent_id, alert_sink=config.alert_sink)
-    gate = Gate(config, log)
-    gate.config_path = config_path
-    server: Server[Any] = Server(
+def build_server(gate: Gate) -> Server[Any]:
+    return Server(
         "honeycomb-gate",
         version=__version__,
         on_list_tools=gate.list_tools,
         on_call_tool=gate.call_tool,
+        on_list_resources=gate.list_resources,
+        on_read_resource=gate.read_resource,
+        on_list_prompts=gate.list_prompts,
+        on_get_prompt=gate.get_prompt,
     )
+
+
+@contextlib.asynccontextmanager
+async def open_gate(
+    config: GateConfig, config_path: Path | None, *, front_door: str
+) -> AsyncIterator[Gate]:
+    """Check the state, start the upstreams and the log, and close it all down afterwards."""
+    check_state(config)
+    log = EventLog(config.event_log_path, agent_id=config.agent_id, alert_sink=config.alert_sink)
+    gate = Gate(config, log)
+    gate.config_path = config_path
     try:
         async with AsyncExitStack() as stack:
             for name, up in config.upstreams.items():
@@ -568,14 +824,24 @@ async def serve(config: GateConfig, config_path: Path | None = None) -> None:
                 )
                 gate.clients[name] = await stack.enter_async_context(Client(params))
             gate.setup_decoys()
-            log.emit("session.started", details={"upstreams": list(config.upstreams)})
-            log.emit("identity.issued", details={"how": "minted by the gate at start-up"})
-            gate.inherit_pause()
-            try:
-                async with stdio_server() as (read, write):
-                    await server.run(read, write, server.create_initialization_options())
-            finally:
-                await gate.drain()  # let incident emails finish before the process exits
-            log.emit("session.ended")
+            gate.default.emit(
+                "session.started", details={"upstreams": list(config.upstreams), "via": front_door}
+            )
+            gate.default.emit("identity.issued", details={"how": "minted by the gate at start-up"})
+            yield gate
+            await gate.drain()  # let incident emails finish before the process exits
+            gate.default.emit("session.ended")
     finally:
         log.close()
+
+
+async def serve(config: GateConfig, config_path: Path | None = None) -> None:
+    """Serve one agent over stdio: the process that starts the gate is the agent's run."""
+    async with open_gate(config, config_path, front_door="stdio") as gate:
+        gate.inherit_pause(gate.default)
+        server = build_server(gate)
+        try:
+            async with stdio_server() as (read, write):
+                await server.run(read, write, server.create_initialization_options())
+        finally:
+            await gate.drain()

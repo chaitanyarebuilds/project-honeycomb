@@ -39,5 +39,23 @@ def read_document(name: str) -> str:
     return path.read_text(encoding="utf-8") if path.exists() else "not found"
 
 
+@server.resource("docs://notes")
+def notes() -> str:
+    """The team notes, as a resource."""
+    return BENIGN
+
+
+@server.resource("docs://file/{name}")
+def document_resource(name: str) -> str:
+    """Any document, by name, as a resource."""
+    return read_document(name)
+
+
+@server.prompt()
+def summarise(name: str) -> str:
+    """Ask for a summary of one document."""
+    return f"Summarise the document called {name} in three lines."
+
+
 if __name__ == "__main__":
     server.run("stdio")

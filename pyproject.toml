@@ -5,7 +5,7 @@ description = "honeycomb-gate: an immune system for AI agents (Phase 0 of Projec
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
-dependencies = ["mcp>=2.3,<3", "pydantic>=2", "typer>=0.12", "PyYAML>=6", "httpx>=0.27"]
+dependencies = ["mcp>=2.3,<3", "pydantic>=2", "typer>=0.12", "PyYAML>=6", "httpx>=0.27", "uvicorn>=0.30"]
 
 [project.scripts]
 honeycomb-gate = "honeycomb_gate.cli:app"

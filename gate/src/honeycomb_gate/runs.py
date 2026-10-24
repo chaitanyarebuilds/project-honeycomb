@@ -41,15 +41,19 @@ class RunControl:
         entry = self._read().get(run_id)
         return bool(entry and entry["status"] == "paused" and "resume_requested_by" in entry)
 
-    def inherit(self, new_run_id: str, also_paused: Iterable[str] = ()) -> list[str]:
+    def inherit(
+        self, new_run_id: str, also_paused: Iterable[str] = (), skip: Iterable[str] = ()
+    ) -> list[str]:
         """A restarted gate must not forget a pause: retire paused runs and pause the new one.
 
-        ``also_paused`` is for runs the log says are paused but this file has lost.
+        ``also_paused`` is for runs the log says are paused but this file has lost. ``skip`` is
+        for runs that belong to someone else (token runs have their own revoked identity).
         """
         with self._lock:
             data = self._read()
             old = sorted(
-                {rid for rid, e in data.items() if e["status"] == "paused"} | set(also_paused)
+                ({rid for rid, e in data.items() if e["status"] == "paused"} | set(also_paused))
+                - set(skip)
             )
             if not old:
                 return []

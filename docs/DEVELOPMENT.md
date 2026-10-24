@@ -28,6 +28,10 @@ You need Python 3.12 or newer and [uv](https://docs.astral.sh/uv/). On Windows 1
 | Check the log has not been tampered with | `uv run honeycomb-gate events verify --config policies/example.yaml` |
 | Plant a honeytoken in an agent workspace | `uv run honeycomb-gate tokens create --kind api-key --place <workspace folder> --config ...` (never inside the repo) |
 | Paused runs and incidents | `uv run honeycomb-gate runs list --config ...`, `incidents list`, `incidents show <id>`, `runs resume <run id>` |
+| Serve over HTTP, with a token check on every request | `uv run honeycomb-gate serve --config ...` (listens on 127.0.0.1:8765 unless `http:` says otherwise) |
+| Issue, renew or revoke a run token | `uv run honeycomb-gate identity issue --agent support-bot --config ...` prints the token on its own line; also `identity renew <run id>`, `identity revoke <run id>`, `identity list`, `identity rotate-key` |
+| Agents the gate has seen | `uv run honeycomb-gate agents list --config ...` |
+| Which enforcement level is really in place | `uv run honeycomb-gate posture --config ...` |
 | Check email settings | copy `.env.example` to `.env`, fill it in, then `uv run honeycomb-gate notify test --config ...` |
 | Review and approve a changed tool | `uv run honeycomb-gate tools list --config ...`, then `tools show upstream__tool --config ...`, then `tools approve upstream__tool --hash <pending hash> --config ...` |
 | Lab (planned, M2 onward) | `docker compose -f lab/docker-compose.yml up --build -d`, then `uv run lab-run --scenario all` |

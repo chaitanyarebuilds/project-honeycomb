@@ -23,6 +23,35 @@ class Upstream(BaseModel):
     env: dict[str, str] = Field(default_factory=dict)
 
 
+class AgentConfig(BaseModel):
+    """A registered agent: the tools its runs may call, as ``upstream__tool`` globs."""
+
+    model_config = ConfigDict(extra="forbid")
+    scopes: list[str] = Field(default=["*"], min_length=1)
+
+
+class HttpConfig(BaseModel):
+    """The front door for ``honeycomb-gate serve``. It listens on this machine only, by default."""
+
+    model_config = ConfigDict(extra="forbid")
+    host: str = "127.0.0.1"
+    port: int = Field(default=8765, ge=1, le=65535)
+    # Host header values a client may use, matched exactly with the port (`gate:8765` or `gate:*`).
+    # Needed when the gate is reached by name (a container, a reverse proxy). The loopback
+    # names are always allowed.
+    allowed_hosts: list[str] = Field(default_factory=list)
+    max_body_bytes: int = Field(default=4_000_000, ge=1_000, le=64_000_000)
+
+
+class DeploymentConfig(BaseModel):
+    """What the operator says about the network. The gate can't see this from the inside."""
+
+    model_config = ConfigDict(extra="forbid")
+    # True if the agent has no route to its tools or the internet except through the gate and
+    # an allowlisting proxy. `honeycomb-gate posture` reports it as declared until a test proves it.
+    network_enforced: bool = False
+
+
 class GateConfig(PolicyConfig):
     schema_version: Literal[1] = 1
     agent_id: str = "default"
@@ -37,6 +66,11 @@ class GateConfig(PolicyConfig):
     decoys: DecoyConfig = Field(default_factory=DecoyConfig)
     notify: NotifyConfig = Field(default_factory=NotifyConfig)
     upstreams: dict[UpstreamName, Upstream]
+    # Registered agents. In strict mode only these may hold a run token; in learning mode any
+    # agent id is accepted (and logged as unknown) with full scope.
+    agents: dict[str, AgentConfig] = Field(default_factory=dict)
+    http: HttpConfig = Field(default_factory=HttpConfig)
+    deployment: DeploymentConfig = Field(default_factory=DeploymentConfig)
 
     @model_validator(mode="after")
     def _cross_checks(self) -> "GateConfig":
@@ -66,6 +100,22 @@ class GateConfig(PolicyConfig):
     @property
     def decoys_path(self) -> Path:
         return self.state_dir / "decoys.json"
+
+    @property
+    def identities_path(self) -> Path:
+        return self.state_dir / "identities.json"
+
+    @property
+    def keys_path(self) -> Path:
+        return self.state_dir / "identity-keys.json"
+
+    @property
+    def egress_proof_path(self) -> Path:
+        return self.state_dir / "egress-proof.json"
+
+    @property
+    def inventory_path(self) -> Path:
+        return self.state_dir / "agents.json"
 
     @property
     def incidents_dir(self) -> Path:

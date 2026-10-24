@@ -1,6 +1,6 @@
 # M3 plan: run identity, egress and the Docker lab
 
-Status: proposal, 25 October 2026, updated after the [direction check](DIRECTION-CHECK.md). Nothing here is built yet. We start once the owner says go.
+Status: M3a built, M3b next (25 October 2026). Updated after the [direction check](DIRECTION-CHECK.md).
 
 ## What M3 has to deliver
 
@@ -76,7 +76,7 @@ The gate container runs the lab's CRM and document servers as stdio subprocesses
 
 **S1 again, in the containers.** Same scenario as M2, but over HTTP with a real run token, so we know the whole path works.
 
-The Docker tests can't run in our build sandbox (there's a Docker CLI but no daemon), so they run in GitHub Actions and on your machine. The proxy, the token code and the log ingestion all have ordinary in-process tests that do run here.
+We can run the lab in the build sandbox: the Docker CLI is there, the daemon starts when we run `dockerd` by hand, images pull, and a network marked internal really has no route out (we checked on 25 October). We'll also run the same lab in GitHub Actions, and on your machine with Docker Desktop. The proxy, the token code and the log ingestion have ordinary in-process tests too.
 
 ## Tests we'd write
 
@@ -108,9 +108,20 @@ The Docker tests can't run in our build sandbox (there's a Docker CLI but no dae
 - An HTTP listener is new attack surface: bind to localhost by default, require a token on every request, and cap request sizes.
 - Docker behaves a little differently on Windows. We use only `docker compose`, no bash scripts, and test on Docker Desktop with WSL 2 before calling it done.
 
-## Questions for the owner
+## Decisions from the owner (25 October 2026)
 
-1. Is it OK that the gate now listens on a network port (localhost by default)? It's the first time it does.
-2. Is it OK to add the egress proxy as a new program in the repo? The spec lists it, but adding a service is something you asked us to check first.
-3. HMAC now, asymmetric signatures later: agreed?
-4. When the proxy sees a token and can't tell which run sent it, is pausing every run of that agent the right default?
+All four questions were answered "go", with these conditions:
+
+1. The gate may listen on a network port. It binds to localhost by default, and every request needs a run token.
+2. The egress proxy is a new program in the repo (`honeycomb-egress`), written with the standard library.
+3. HMAC tokens now, asymmetric later. The signing key must never be reachable by the agent.
+4. When the proxy sees a honeytoken and can't tell which run sent it, we first try to identify the run (the agent authenticates to the proxy with its run token). If that isn't possible we pause every active run of that agent.
+
+## Where M3a stands
+
+Built and tested: resources and prompts through the gate, per-run state, the HTTP front door (`honeycomb-gate serve`), signed run tokens with revocation and key rotation, scopes, the agent inventory, and `honeycomb-gate posture`. M3b (egress proxy, Docker lab, S3) is next.
+
+Two small design calls we made on the way, both easy to change:
+
+- A token run that trips has its identity revoked for good. `runs resume` issues a new token for the same agent instead of reviving the old one, which keeps the rule that a tripped identity stays dead.
+- For scopes, reading a resource counts as the tool name `<upstream>__resources/read`, and a prompt is scoped by its `upstream__name`.

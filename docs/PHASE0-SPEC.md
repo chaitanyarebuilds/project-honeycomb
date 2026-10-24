@@ -90,7 +90,7 @@ flowchart LR
 **F1. Transport and proxying.**
 
 - Support stdio and Streamable HTTP on both the agent side and the upstream side, and multiplex several upstream servers into one namespace.
-- Where we are: stdio on both sides only. Streamable HTTP on the agent side comes with M3 (it's what lets an agent present a run token); HTTP to upstream servers is later. Resources and prompts are not passed through yet: the gate answers tool calls only, so a client can't use them through it. That's safe but incomplete, and we plan to fix it at the start of M3.
+- Where we are: stdio on both sides, plus Streamable HTTP on the agent side (`honeycomb-gate serve`, M3a), which is what lets an agent present a run token. HTTP to upstream servers is later. Resources and prompts now go through the gate: they are logged, scanned for honeytokens and stopped when the run is paused. Resource templates, subscriptions and completions are not passed through yet.
 - Preserve JSON-RPC request IDs. (A proxy answers each agent request under the agent's own id and calls the upstream under a new one, so in practice this means every answer goes back to the right request.)
 - Pass resources and prompts through, but log them in Phase 0, because they can also carry injections. Policy over them comes later.
 - Treat tool annotations from upstream servers (such as `readOnlyHint` and `destructiveHint`) as untrusted hints. Never use them to grant permissions.
@@ -133,8 +133,11 @@ flowchart LR
 
 **F7. Run identity.**
 
-- Each session gets a `run_id` and a short-lived signed token containing the run ID, agent ID, scopes and an expiry of 15 minutes or less, renewable. Scopes come from policy.
-- Revocation is checked on every call.
+- Each run gets a `run_id` and a short-lived signed token containing the run ID, agent ID, scopes and an expiry of 15 minutes or less, renewable. Scopes come from the `agents:` section of the policy.
+- Tokens are `hc1.<payload>.<signature>`, HMAC-SHA256 with a key that only the gate holds (the `HONEYCOMB_RUN_KEY` variable, or a private file in the state folder). Rotating the key keeps recent tokens valid until they can no longer be live. A symmetric key means only the gate can check a token; asymmetric signatures wait until an upstream server needs to verify them.
+- Revocation is checked on every request. A decoy or honeytoken trip revokes the run's token, and resuming a run issues a new one (`honeycomb-gate runs resume` prints it).
+- Over HTTP, every request needs a valid token. A tool, prompt or resource outside the token's scopes is denied as `out_of_scope`. Decoys stay visible to every run. For scope purposes, reading a resource counts as the tool name `<upstream>__resources/read`.
+- In strict mode an agent that isn't registered under `agents:` is turned away; in learning mode it is accepted, with full scope, and logged as `agent.unknown`.
 - Where an upstream server supports it, the token is passed on so that the server can enforce it too.
 - Cloud IAM and SPIFFE integration are later work.
 
@@ -174,10 +177,13 @@ flowchart LR
 - `notify test`
 - `policy check`
 - `tokens create|list|revoke`
+- `serve` (HTTP front door)
+- `identity issue|renew|revoke|list|rotate-key`
+- `agents list`
 - `events tail|query|verify`
 - `approvals list|approve|deny`
 - `baseline show`
-- `posture` (planned, ADR-0004)
+- `posture` (ADR-0004)
 - `version`
 
 ## 6. Data contracts
@@ -215,11 +221,12 @@ Changes made in M1 (ADR-0002, ADR-0005; schema v1 had not been released yet):
 Event kinds. The approval, egress, baseline and memory kinds arrive in M3 to M5 and are not emitted yet:
 
 - `session.started`, `session.paused`, `session.ended`
+- `resource.listed`, `resource.read`, `prompt.listed`, `prompt.fetched`
 - `tools.listed`, `tool.pinned`, `tool.definition_changed`, `tool.unapproved`, `tool.approved`, `tool.suspicious_description`
 - `call.allowed`, `call.completed`, `call.denied`, `call.approval_requested`, `call.approved`, `call.approval_denied`, `call.approval_timeout`
 - `decoy.tripped`, `decoy.collision`, `honeytoken.used`, `egress.blocked`
 - `incident.opened`, `incident.notified`, `incident.deduplicated`, `notify.failed`
-- `identity.issued`, `identity.revoked`, `session.resumed`
+- `identity.issued`, `identity.revoked`, `identity.rejected`, `session.resumed`, `agent.unknown`
 - `baseline.deviation`
 - `memory.rule_learned`, `memory.rule_matched`
 - `gate.error`
@@ -229,6 +236,9 @@ Event kinds. The approval, egress, baseline and memory kinds arrive in M3 to M5 
 These can also be configured:
 
 - `upstreams.<name>.env`: the only environment an upstream process receives. The gate's own environment, such as mail credentials, is never passed on.
+- `agents.<id>.scopes`: tool globs (`upstream__tool`) a run for that agent may use. Default `["*"]`.
+- `http`: `host` (default `127.0.0.1`), `port` (8765), `allowed_hosts` (extra Host header values for a container or reverse proxy, matched exactly including the port, so `gate:8765` or `gate:*`) and `max_body_bytes`.
+- `deployment.network_enforced`: what the operator declares about the network. `honeycomb-gate posture` reports it as declared until a lab test writes the proof file.
 - `decoys`: `count`, `vocabulary`, `placement`, `on_trip.response`, `on_trip.tarpit_delay_s`.
 - `notify`: `email`, `webhook_url`, `dedupe_window_s`.
 - `agent_id`, `state_dir` and `event_log`.
@@ -346,7 +356,8 @@ All services sit on an `internal: true` network.
 
 **M3: identity and egress (weeks 5–6)**
 
-- [ ] Run identity and revocation (F7)
+- [x] Resources and prompts through the gate (F1), with logging and the honeytoken scan
+- [x] Run identity and revocation (F7): per-run state, HTTP front door, signed run tokens, scopes, agent inventory and the `posture` report (M3a)
 - [ ] Lab egress proxy and log ingestion (F8)
 - [ ] S3 passes fully
 
