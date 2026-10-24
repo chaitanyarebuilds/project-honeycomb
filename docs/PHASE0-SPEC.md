@@ -77,8 +77,8 @@ flowchart LR
 ### Flow: calling a tool
 
 1. The agent calls `tools/call`.
-2. The gate resolves the session and checks the run identity is valid and not revoked (F7).
-3. If the tool is a decoy: trip, log, pause the session, revoke the identity, alert, and return a tarpit response. The call is never forwarded.
+2. The gate finds the run and checks its identity is valid and not revoked (F7).
+3. If the tool is a decoy: trip, log, pause the run, revoke the identity, alert, and return a tarpit response. The call is never forwarded.
 4. The arguments are scanned for honeytokens. A hit trips the same way.
 5. Policy is evaluated with first-match rules, giving allow, deny or approve, plus rate and blast-radius caps.
 6. If the result is approve, the approval broker asks a human (F10), and a timeout means deny.
@@ -90,7 +90,8 @@ flowchart LR
 **F1. Transport and proxying.**
 
 - Support stdio and Streamable HTTP on both the agent side and the upstream side, and multiplex several upstream servers into one namespace.
-- Preserve JSON-RPC request IDs.
+- Where we are: stdio on both sides only. Streamable HTTP on the agent side comes with M3 (it's what lets an agent present a run token); HTTP to upstream servers is later. Resources and prompts are not passed through yet: the gate answers tool calls only, so a client can't use them through it. That's safe but incomplete, and we plan to fix it at the start of M3.
+- Preserve JSON-RPC request IDs. (A proxy answers each agent request under the agent's own id and calls the upstream under a new one, so in practice this means every answer goes back to the right request.)
 - Pass resources and prompts through, but log them in Phase 0, because they can also carry injections. Policy over them comes later.
 - Treat tool annotations from upstream servers (such as `readOnlyHint` and `destructiveHint`) as untrusted hints. Never use them to grant permissions.
 - Before building, verify the current MCP spec revision and SDK behaviour, and record both here.
@@ -161,7 +162,6 @@ flowchart LR
 - A trip opens an incident (a JSON file under `incidents/`). Its message answers five questions: what happened, how sure we are, what the gate already did, what to do now, and how protected we are. `honeycomb-gate incidents list|show|ack`.
 - Incidents go out by email (SMTP, with settings from the environment or `.env`, never from the repo) and a generic webhook. If sending fails, the gate logs `notify.failed`; containment is not weakened, because the run is already paused. `honeycomb-gate notify test` sends a labelled test message.
 - Escalation when nobody acknowledges arrives in M4.
-- Delivered to the console and a webhook as JSON.
 - Severity levels are info, low, medium, high and critical. Repeats are deduplicated within a time window.
 
 **F12. CLI.**
@@ -174,9 +174,10 @@ flowchart LR
 - `notify test`
 - `policy check`
 - `tokens create|list|revoke`
-- `events tail|query`
+- `events tail|query|verify`
 - `approvals list|approve|deny`
 - `baseline show`
+- `posture` (planned, ADR-0004)
 - `version`
 
 ## 6. Data contracts
@@ -211,7 +212,7 @@ Changes made in M1 (ADR-0002, ADR-0005; schema v1 had not been released yet):
 
 `call.allowed` is written before the call is forwarded and `call.completed` after it (with `latency_ms`), so a call never happens without a record. The checkpoint rows written to the second sink are not events. Upstream names are lower-case letters, digits and `-` (1 to 32 characters, starting with a letter). Honeytoken events carry `details.honeytoken_id`, not `token_id`, because the redactor hides anything named like a secret. `args_redacted` goes through secret redaction before it is stored.
 
-Event kinds:
+Event kinds. The approval, egress, baseline and memory kinds arrive in M3 to M5 and are not emitted yet:
 
 - `session.started`, `session.paused`, `session.ended`
 - `tools.listed`, `tool.pinned`, `tool.definition_changed`, `tool.unapproved`, `tool.approved`, `tool.suspicious_description`
@@ -233,6 +234,9 @@ These can also be configured:
 - `agent_id`, `state_dir` and `event_log`.
 - `alert_sink`: the second sink, which gets high and critical events and a checkpoint after every event.
 - `recheck_ttl_s`: default 0, which re-checks each tool's live definition on every call.
+- `call_timeout_s`: default 120, how long one upstream call may take before the gate gives up on it.
+
+On start-up the gate refuses to run if the event log fails its integrity check against the second sink, or if tools were pinned but `pins.json` is missing. The message says which file and how to recover.
 
 ```yaml
 schema_version: 1

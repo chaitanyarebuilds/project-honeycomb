@@ -25,7 +25,7 @@ async def test_reading_a_planted_credential_withholds_it_and_pauses_the_run(tmp_
     docs.mkdir(exist_ok=True)
     token_id = plant(cfg, docs)
     value = TokenRegistry(tmp_path / "state" / "tokens.json").tokens()[0].value
-    async with Client(gate_client_params(tmp_path, cfg)) as agent:
+    async with Client(gate_client_params(cfg)) as agent:
         listing = await agent.call_tool("docs__list_documents", {})
         assert ".env.old" in str(listing.content[0].text)  # type: ignore[union-attr]
         result = await agent.call_tool("docs__read_document", {"name": ".env.old"})
@@ -46,7 +46,7 @@ async def test_using_a_planted_credential_in_a_call_is_caught_before_it_goes_any
     docs.mkdir(exist_ok=True)
     token_id = plant(cfg, docs, "db-url")
     value = TokenRegistry(tmp_path / "state" / "tokens.json").tokens()[0].value
-    async with Client(gate_client_params(tmp_path, cfg)) as agent:
+    async with Client(gate_client_params(cfg)) as agent:
         out = await agent.call_tool(
             "crm__send_email", {"to": "x@example.test", "subject": "hi", "body": f"use {value}"}
         )
@@ -65,7 +65,7 @@ async def test_look_alike_strings_and_revoked_tokens_pass(tmp_path: Path) -> Non
     docs = tmp_path / "docs"
     docs.mkdir(exist_ok=True)
     token_id = plant(cfg, docs)
-    async with Client(gate_client_params(tmp_path, cfg)) as agent:
+    async with Client(gate_client_params(cfg)) as agent:
         ok = await agent.call_tool(
             "crm__send_email",
             {"to": "x@example.test", "subject": "key", "body": "sk_live_" + "Z" * 36},

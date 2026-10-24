@@ -11,8 +11,9 @@ import typer
 from honeycomb_gate import __version__
 from honeycomb_gate.config import GateConfig, load_config
 from honeycomb_gate.decoys import DecoyBook
-from honeycomb_gate.events import query_events, verify_chain
+from honeycomb_gate.events import LogCorruptError, query_events, verify_chain
 from honeycomb_gate.incidents import Incident, IncidentStore, render_text
+from honeycomb_gate.locking import StateCorruptError
 from honeycomb_gate.notify import Notifier, load_dotenv
 from honeycomb_gate.proxy import SEP, serve
 from honeycomb_gate.redact import sanitize_name
@@ -37,7 +38,11 @@ def _cfg(config: Path) -> GateConfig:
 def run(config: ConfigOpt) -> None:
     """Serve the gate over stdio: point your MCP client at this command."""
     load_dotenv()
-    anyio.run(serve, _cfg(config), config)
+    try:
+        anyio.run(serve, _cfg(config), config)
+    except* (StateCorruptError, LogCorruptError) as group:  # may arrive wrapped in a group
+        typer.echo(f"Not starting: {group.exceptions[0]}", err=True)
+        raise typer.Exit(1) from None
 
 
 @app.command()

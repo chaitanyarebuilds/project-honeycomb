@@ -4,7 +4,7 @@ Status: Accepted by the owner on 24 October 2026. Date: 2026-10-24. Replaces F11
 
 ## Decision
 
-An incident records its id, severity, state (open, acknowledged, contained, closed), run and agent, event ids as evidence, the actions the gate already took, recommended next steps, a notification log and the enforcement level at the time. It also has a `regulatory_clock_start` field for later CERT-In and DPDP workflows.
+An incident records its id, severity, state (open, acknowledged, contained, closed), run and agent, event ids as evidence, the actions the gate already took, recommended next steps, a notification log and the enforcement level at the time. When the CERT-In and DPDP workflows exist, we'll add a field that marks when the reporting clock started.
 
 The response ladder:
 
@@ -18,7 +18,7 @@ The response ladder:
 | 5 | Isolate the agent (egress deny-all) | policy-configured; off by default outside the lab |
 | 6 | Rotate credentials the agent could reach | human approval only (quorum for critical) |
 
-Critical incidents go to the primary channel at once. If nobody acknowledges within N minutes (default 10), they escalate to the secondary channel. Every message says what the gate already did and what the person should do next. Phase 0 channels are webhook and CLI. Email, Slack and Telegram come later (D3).
+Critical incidents go to the primary channel at once. If nobody acknowledges within N minutes (default 10), they escalate to the secondary channel. Every message says what the gate already did and what the person should do next. Phase 0 channels are email, a webhook and the CLI (D3 settled on email first). Slack and Telegram come later.
 
 ## Why
 

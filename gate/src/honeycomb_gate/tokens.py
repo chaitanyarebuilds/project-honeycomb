@@ -7,18 +7,16 @@ committed (some look like real keys and would trip secret scanners).
 """
 
 import base64
-import json
-import os
 import re
 import secrets
 import string
-import tempfile
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from honeycomb_gate.locking import FileLock
+from honeycomb_gate.locking import FileLock, StateCorruptError, read_json, write_json_atomic
+from honeycomb_gate.walk import strings_of
 
 KINDS = ("api-key", "db-url", "webhook-url", "password")
 _ID_ALPHABET = "abcdefghijklmnopqrstuvwxyz234567"
@@ -30,7 +28,6 @@ _ENV_NAMES = {
     "webhook-url": "SLACK_WEBHOOK_URL",
     "password": "ADMIN_PASSWORD",
 }
-MAX_PAYLOAD_CHARS = 8_000_000  # the gate refuses larger calls, so nothing can hide past a cap
 _INVISIBLE = re.compile("[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u00ad\ufeff]")
 _B64_RUN = re.compile(r"[A-Za-z0-9+/_\-]{16,}={0,2}")
 
@@ -82,20 +79,14 @@ class TokenRegistry:
         self._mtime: int | None = None
 
     def _read(self) -> list[Token]:
-        if not self.path.exists():
-            return []
-        raw: dict[str, dict[str, Any]] = json.loads(self.path.read_text("utf-8"))
-        return [Token(id=i, **v) for i, v in raw.items()]
+        try:
+            return [Token(id=i, **v) for i, v in read_json(self.path, {}).items()]
+        except TypeError as exc:  # a record with the wrong fields
+            raise StateCorruptError(f"{self.path} has a damaged record ({exc}).") from exc
 
     def _write(self, tokens: list[Token]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         body = {t.id: {k: v for k, v in t.__dict__.items() if k != "id"} for t in tokens}
-        fd, tmp = tempfile.mkstemp(dir=self.path.parent, suffix=".tmp")  # created 0600
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(body, f, indent=2)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, self.path)
+        write_json_atomic(self.path, body, indent=2)
 
     def tokens(self) -> list[Token]:
         if not self.path.exists():
@@ -152,8 +143,8 @@ class TokenRegistry:
         active = [t for t in self.tokens() if not t.revoked]
         if not active:
             return []
-        strings = _strings(payload)
-        values = _strings(payload, keys=False)
+        strings = strings_of(payload, numbers=True)
+        values = strings_of(payload, keys=False, numbers=True)
         # Keys and values together, values only, and values run together (a token split over
         # several fields or list items).
         views = ["\n".join(strings), "\n".join(values), "".join(values)]
@@ -161,7 +152,7 @@ class TokenRegistry:
         for view in views:
             clean = _INVISIBLE.sub("", view).lower()
             texts.append(clean)
-            texts.extend(_decoded_runs(clean, view))
+            texts.extend(_decoded_runs(view))
         return [
             Sighting(t.id, t.kind, t.placed)
             for t in active
@@ -194,22 +185,7 @@ class TokenRegistry:
         return walk(payload)
 
 
-def _strings(value: Any, depth: int = 0, *, keys: bool = True) -> list[str]:
-    if depth > 12:
-        return []
-    if isinstance(value, str):
-        return [value]
-    if isinstance(value, dict):
-        out: list[str] = []
-        for k, v in value.items():
-            out += (_strings(k, depth + 1) if keys else []) + _strings(v, depth + 1, keys=keys)
-        return out
-    if isinstance(value, list | tuple):
-        return [x for v in value for x in _strings(v, depth + 1, keys=keys)]
-    return [str(value)] if isinstance(value, int | float) else []
-
-
-def _decoded_runs(clean: str, original: str) -> list[str]:
+def _decoded_runs(original: str) -> list[str]:
     """Readable text hidden inside base64-looking runs, lower-cased for matching."""
     out: list[str] = []
     for run in _B64_RUN.findall(original)[:200]:
@@ -237,14 +213,19 @@ def place(token: Token, target: Path, *, allow_in_repo: bool = False) -> Path:
     ``target`` may be a file (a line is appended) or a directory (``.env.old`` is created).
     Refuses to write inside a git work tree unless told otherwise: tokens must not be committed.
     """
-    dest = target / ".env.old" if target.is_dir() else target
+    dest = (target / ".env.old" if target.is_dir() else target).resolve()  # follow symlinks
     if _inside_git_repo(dest.parent) and not allow_in_repo:
         raise PlacementError(
             f"{dest} is inside a git repository. Honeytokens must never be committed. "
             "Place it in a workspace outside the repo, or pass --allow-in-repo and make sure "
             "the file is ignored."
         )
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    with dest.open("a", encoding="utf-8") as f:
-        f.write(f"{_ENV_NAMES[token.kind]}={token.value}\n")
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with dest.open("a", encoding="utf-8") as f:
+            f.write(f"{_ENV_NAMES[token.kind]}={token.value}\n")
+    except OSError as exc:
+        raise PlacementError(
+            f"could not write to {dest}: {exc.strerror or type(exc).__name__}"
+        ) from exc
     return dest

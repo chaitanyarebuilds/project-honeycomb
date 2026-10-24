@@ -10,15 +10,16 @@ question always gets the same answer and no model sits in the response path.
 import hashlib
 import hmac
 import json
-import os
 import random
+import re
 import secrets
-import tempfile
 from pathlib import Path
 from typing import Any
 
 import mcp.types as types
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from honeycomb_gate.locking import read_json, write_json_atomic
 
 _OBJ: dict[str, Any] = {"type": "object", "properties": {}}
 
@@ -50,12 +51,28 @@ class OnTrip(BaseModel):
     tarpit_delay_s: float = Field(default=2.0, ge=0, le=30)
 
 
+_TOOL_NAME = re.compile(r"[a-z][a-z0-9_]{0,63}")
+
+
 class DecoyConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     count: int = Field(default=0, ge=0, le=10)  # 0 turns decoys off
     vocabulary: list[str] = Field(default_factory=lambda: list(DEFAULT_DECOYS))
     placement: str | None = None  # upstream the decoys appear under; default: first upstream
     on_trip: OnTrip = Field(default_factory=OnTrip)
+
+    @model_validator(mode="after")
+    def _sane_vocabulary(self) -> "DecoyConfig":
+        bad = [n for n in self.vocabulary if not _TOOL_NAME.fullmatch(n)]
+        if bad:
+            raise ValueError(f"decoy names must be lower-case letters, digits and _ ({bad[0]!r})")
+        if len(set(self.vocabulary)) != len(self.vocabulary):
+            raise ValueError("decoys.vocabulary has the same name twice")
+        if self.count > len(self.vocabulary):
+            raise ValueError(
+                f"decoys.count is {self.count} but the vocabulary only has {len(self.vocabulary)}"
+            )
+        return self
 
 
 _ALT_WORDING = {
@@ -116,18 +133,14 @@ class DecoyBook:
     def _load_or_choose(self, state_file: Path) -> tuple[str, list[str]]:
         vocab = self.config.vocabulary
         if state_file.exists():
-            saved = json.loads(state_file.read_text("utf-8"))
+            saved = read_json(state_file, {})
             if set(saved["names"]) <= set(vocab) and len(saved["names"]) == min(
                 self.config.count, len(vocab)
             ):
                 return str(saved["seed"]), list(saved["names"])
         seed = secrets.token_hex(16)
         names = random.Random(seed).sample(vocab, k=min(self.config.count, len(vocab)))
-        state_file.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        fd, tmp = tempfile.mkstemp(dir=state_file.parent, suffix=".tmp")  # created 0600
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump({"seed": seed, "names": names}, f)
-        os.replace(tmp, state_file)
+        write_json_atomic(state_file, {"seed": seed, "names": names})
         return seed, names
 
     @property

@@ -1,6 +1,6 @@
 # Sources
 
-Claims made in the video series, with the sources used and the hedges kept on screen.
+Claims made in [the video](https://youtu.be/OLbzQwiVDWs), with the sources used and the hedges kept on screen.
 
 | Claim | Sources | Hedge |
 | --- | --- | --- |

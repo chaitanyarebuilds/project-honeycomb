@@ -2,9 +2,11 @@
 
 **An immune system for every network.** Project Honeycomb is an open, early-stage design for an agentic cybersecurity platform modelled on the human immune system.
 
-> **Status: concept and research.** There is no production code yet. This repository holds the design, the research and the plan, and it is here to be challenged. Critique, prior art and contributors are all welcome.
+> **Status: early prototype.** The design, the research and the plan are here, and so are the first working pieces of the Phase 0 gate: an MCP proxy with a tamper-evident event log, tool pinning, decoy tools, honeytokens and incident emails. It is not production software. It is public so it can be challenged. Critique, prior art and contributors are all welcome.
 
-[Watch the series](YOUTUBE_PLAYLIST_URL) · [Discuss](../../discussions) · [Contribute](CONTRIBUTING.md) · [Join as a collaborator](COLLABORATOR_FORM_URL)
+[Watch the video](https://youtu.be/OLbzQwiVDWs) · [Discuss](../../discussions) · [Contribute](CONTRIBUTING.md) · [Join as a collaborator](COLLABORATOR_FORM_URL)
+
+The [video](https://youtu.be/OLbzQwiVDWs) tells the story in four parts:
 
 | Part | Title | Length |
 | --- | --- | --- |

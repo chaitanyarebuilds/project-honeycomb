@@ -12,15 +12,14 @@ never used to grant anything: they are untrusted hints.
 import difflib
 import hashlib
 import json
-import os
 import re
-import tempfile
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from honeycomb_gate.locking import FileLock
+from honeycomb_gate.locking import FileLock, read_json, write_json_atomic
+from honeycomb_gate.walk import strings_of
 
 APPROVED = "approved"
 QUARANTINED = "quarantined"
@@ -59,19 +58,10 @@ class PinStore:
         self._lock = FileLock(path.with_name(path.name + ".lock"))
 
     def _read(self) -> dict[str, dict[str, dict[str, Any]]]:
-        if not self.path.exists():
-            return {}
-        data: dict[str, dict[str, dict[str, Any]]] = json.loads(self.path.read_text("utf-8"))
-        return data
+        return read_json(self.path, {})
 
     def _write(self, data: dict[str, dict[str, dict[str, Any]]]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        fd, tmp = tempfile.mkstemp(dir=self.path.parent, suffix=".tmp")  # created 0600
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, sort_keys=True)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, self.path)
+        write_json_atomic(self.path, data, indent=2, sort_keys=True)
 
     def entries(self) -> dict[str, dict[str, dict[str, Any]]]:
         with self._lock:
@@ -255,23 +245,9 @@ def scan_description(text: str | None) -> DescriptionFinding:
     return DescriptionFinding(strong or score >= 2, score, reasons)
 
 
-def _strings(value: Any, depth: int = 0) -> list[str]:
-    if depth > 12:
-        return []
-    if isinstance(value, str):
-        return [value]
-    if isinstance(value, dict):
-        return [
-            s for k, v in value.items() for s in (_strings(k, depth + 1) + _strings(v, depth + 1))
-        ]
-    if isinstance(value, list | tuple):
-        return [s for v in value for s in _strings(v, depth + 1)]
-    return []
-
-
 def scan_definition(definition: dict[str, Any]) -> DescriptionFinding:
     """Scan every model-visible string in a tool definition, not just its description."""
-    findings = [scan_description(s) for s in _strings(definition)]
+    findings = [scan_description(s) for s in strings_of(definition)]
     reasons = sorted({r for f in findings for r in f.reasons})
     return DescriptionFinding(
         any(f.suspicious for f in findings), max((f.score for f in findings), default=0), reasons

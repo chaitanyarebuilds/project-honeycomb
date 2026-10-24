@@ -80,9 +80,7 @@ def make_docs(workdir: Path) -> Path:
     return docs
 
 
-def gate_client_params(
-    workdir: Path, cfg: Path, extra_env: dict[str, str] | None = None
-) -> StdioServerParameters:
+def gate_client_params(cfg: Path, extra_env: dict[str, str] | None = None) -> StdioServerParameters:
     return StdioServerParameters(
         command=sys.executable,
         args=["-m", "honeycomb_gate.cli", "run", "--config", str(cfg)],
@@ -98,7 +96,7 @@ async def run_s1(workdir: Path, *, extra_env: dict[str, str] | None = None) -> d
     """Play the attack and return what happened, measured from the client side and the log."""
     cfg = write_config(workdir)
     steps = 0
-    async with Client(gate_client_params(workdir, cfg, extra_env)) as agent:
+    async with Client(gate_client_params(cfg, extra_env)) as agent:
         tools = [t.name for t in (await agent.list_tools()).tools]
         steps += 1
         doc = _text(await agent.call_tool("docs__read_document", {"name": "q3-report.txt"}))

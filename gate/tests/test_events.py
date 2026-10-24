@@ -177,3 +177,38 @@ def test_redaction_cannot_be_used_to_stall_the_gate() -> None:
     for hostile in ("a." * 200_000, "x:" * 200_000, "http://" + "a" * 200_000):
         redact({"text": hostile, hostile[:50]: 1})
     assert time.monotonic() - started < 1.0
+
+
+def test_a_write_that_stops_half_way_is_cut_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import os
+
+    log = EventLog(tmp_path / "events.jsonl")
+    log.emit("call.allowed")
+    good = (tmp_path / "events.jsonl").read_bytes()
+    real_write = os.write
+    calls = {"n": 0}
+
+    def half_then_fail(fd: int, data: bytes) -> int:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return real_write(fd, data[: len(data) // 2])  # only half goes out
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(os, "write", half_then_fail)
+    with pytest.raises(OSError):
+        log.emit("call.allowed")
+    monkeypatch.undo()
+    assert (tmp_path / "events.jsonl").read_bytes() == good
+    log.emit("call.allowed")  # and the next write is clean
+    assert verify_chain(tmp_path / "events.jsonl").ok
+
+
+def test_a_torn_line_in_the_second_sink_is_reported_not_a_traceback(tmp_path: Path) -> None:
+    sink = tmp_path / "sink.jsonl"
+    make_log(tmp_path, n=2, alert_sink=sink).close()
+    with sink.open("a") as f:
+        f.write('{"type": "checkpoint", "count"')  # killed mid-write
+    report = verify_chain(tmp_path / "events.jsonl", sink)
+    assert not report.ok and "damaged line" in report.reason

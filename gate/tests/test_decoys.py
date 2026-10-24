@@ -4,11 +4,12 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from honeycomb_gate.decoys import DecoyBook, DecoyConfig, tarpit_delay, tarpit_text
+from honeycomb_gate.decoys import DEFAULT_DECOYS, DecoyBook, DecoyConfig, tarpit_delay, tarpit_text
 
 
 def book(tmp_path: Path, **kw: object) -> DecoyBook:
-    cfg = DecoyConfig(count=2, **kw)  # type: ignore[arg-type]
+    vocabulary = kw.get("vocabulary") or list(DEFAULT_DECOYS)
+    cfg = DecoyConfig(count=min(2, len(vocabulary)), **kw)  # type: ignore[arg-type]
     return DecoyBook(cfg, ["crm", "docs"], tmp_path / "decoys.json")
 
 
@@ -34,14 +35,6 @@ def test_decoys_are_off_by_default(tmp_path: Path) -> None:
     off = DecoyBook(DecoyConfig(), ["crm"], tmp_path / "decoys.json")
     assert off.names == [] and not off.is_decoy("crm__export_all_customer_data")
     assert off.tools(set()) == ([], [])
-
-
-def test_a_decoy_never_shadows_a_real_tool(tmp_path: Path) -> None:
-    b = book(tmp_path, vocabulary=["export_all_customer_data", "get_admin_api_key"])
-    real = {"crm__export_all_customer_data"}  # a real tool already has this name
-    tools, skipped = b.tools(real)
-    assert skipped == ["crm__export_all_customer_data"]
-    assert [t.name for t in tools] == ["crm__get_admin_api_key"]
 
 
 def test_decoy_tools_look_like_ordinary_tools(tmp_path: Path) -> None:

@@ -41,7 +41,7 @@ What we should **not** claim: that decoys or honeytokens are new, that we are th
 
 ## 4. How attackers are changing (design inputs)
 
-Sources: the research report behind the video series and [SOURCES.md](../SOURCES.md).
+Sources: the research report behind [the video](https://youtu.be/OLbzQwiVDWs) and [SOURCES.md](../SOURCES.md).
 
 | Trend | What it means for the design |
 | --- | --- |

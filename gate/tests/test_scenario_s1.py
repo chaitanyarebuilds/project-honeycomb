@@ -78,7 +78,7 @@ async def test_a_mail_outage_does_not_weaken_containment_or_leak_secrets(tmp_pat
 async def test_benign_session_with_export_look_alike_trips_nothing(tmp_path: Path) -> None:
     smtp = FakeSMTP().start()
     cfg = write_config(tmp_path)
-    async with Client(gate_client_params(tmp_path, cfg, mail_env(smtp))) as agent:
+    async with Client(gate_client_params(cfg, mail_env(smtp))) as agent:
         names = [t.name for t in (await agent.list_tools()).tools]
         assert "crm__export_report" in names  # a real tool with "export" in its name
         notes = await agent.call_tool("docs__read_document", {"name": "notes.txt"})
@@ -94,7 +94,7 @@ async def test_benign_session_with_export_look_alike_trips_nothing(tmp_path: Pat
 
 async def test_resume_issues_a_new_identity_and_keeps_the_old_one_revoked(tmp_path: Path) -> None:
     cfg = write_config(tmp_path, email=False)
-    async with Client(gate_client_params(tmp_path, cfg)) as agent:
+    async with Client(gate_client_params(cfg)) as agent:
         tools = [t.name for t in (await agent.list_tools()).tools]
         decoy = next(t for t in tools if "export_all" in t)
         await agent.call_tool(decoy, {})
@@ -110,16 +110,18 @@ async def test_resume_issues_a_new_identity_and_keeps_the_old_one_revoked(tmp_pa
         assert not (await agent.call_tool("crm__search_customers", {"query": "an"})).is_error
     events = read_log(tmp_path)
     issued = [e for e in events if e["kind"] == "identity.issued"]
+    assert issued[0]["run_id"] == old_run  # the first identity, minted at start-up
+    issued = [e for e in issued if "previous_run_id" in e["details"]]  # re-issued by a resume
     assert len(issued) == 1 and issued[0]["run_id"] != old_run
     assert issued[0]["details"]["previous_run_id"] == old_run
     runs = json.loads((tmp_path / "state" / "runs.json").read_text())
     assert (
         runs[old_run]["status"] == "revoked" and runs[old_run]["resumed_as"] == issued[0]["run_id"]
     )
-    assert not runner.invoke(app, ["runs", "resume", old_run, "--config", str(cfg)]).exit_code == 0
+    assert runner.invoke(app, ["runs", "resume", old_run, "--config", str(cfg)]).exit_code != 0
 
 
-def test_upstream_servers_do_not_inherit_the_gates_environment(tmp_path: Path) -> None:
+def test_upstream_servers_do_not_inherit_the_gates_environment() -> None:
     from honeycomb_gate.config import Upstream
 
     assert Upstream(command=["x"]).env == {}  # nothing is passed on unless listed
@@ -132,7 +134,7 @@ async def test_error_response_mode_returns_no_data(tmp_path: Path) -> None:
     data = yaml.safe_load(cfg.read_text())
     data["decoys"]["on_trip"] = {"response": "error"}
     cfg.write_text(yaml.safe_dump(data))
-    async with Client(gate_client_params(tmp_path, cfg)) as agent:
+    async with Client(gate_client_params(cfg)) as agent:
         decoy = next(t.name for t in (await agent.list_tools()).tools if "export_all" in t.name)
         result = await agent.call_tool(decoy, {})
     assert result.is_error and "example.test" not in str(result.content[0].text)  # type: ignore[union-attr]
@@ -167,11 +169,11 @@ def test_the_lab_attacker_refuses_anything_but_local_lab_targets(
 
 async def test_a_restart_does_not_clear_a_pause(tmp_path: Path) -> None:
     cfg = write_config(tmp_path, email=False)
-    async with Client(gate_client_params(tmp_path, cfg)) as agent:
+    async with Client(gate_client_params(cfg)) as agent:
         decoy = next(t.name for t in (await agent.list_tools()).tools if "export_all" in t.name)
         await agent.call_tool(decoy, {})
     # The agent's host respawns the gate: it gets a new process and a new run id.
-    async with Client(gate_client_params(tmp_path, cfg)) as agent:
+    async with Client(gate_client_params(cfg)) as agent:
         assert (await agent.list_tools()).tools == []
         assert (await agent.call_tool("crm__search_customers", {"query": "an"})).is_error
         runner = CliRunner()
@@ -198,7 +200,7 @@ async def test_a_real_tool_named_like_a_decoy_is_not_treated_as_one(tmp_path: Pa
     data = yaml.safe_load(cfg.read_text())
     data["decoys"]["vocabulary"] = ["export_report"]  # the real CRM tool's name
     cfg.write_text(yaml.safe_dump(data))
-    async with Client(gate_client_params(tmp_path, cfg)) as agent:
+    async with Client(gate_client_params(cfg)) as agent:
         names = [t.name for t in (await agent.list_tools()).tools]
         assert names.count("crm__export_report") == 1
         result = await agent.call_tool("crm__export_report", {"report": "monthly"})

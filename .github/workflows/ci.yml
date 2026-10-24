@@ -2,7 +2,7 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [chaitanyarebuilds]
 jobs:
   checks:
     runs-on: ubuntu-latest

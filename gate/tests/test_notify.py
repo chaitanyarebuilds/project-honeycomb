@@ -109,7 +109,7 @@ def test_incidents_are_stored_listed_and_acknowledged(tmp_path: Path) -> None:
     assert not store.acknowledge("inc_nope", "ops")
 
 
-async def test_a_webhook_receives_the_incident(tmp_path: Path) -> None:
+async def test_a_webhook_receives_the_incident() -> None:
     received: list[bytes] = []
 
     async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:

@@ -60,7 +60,7 @@ Duplicate alerts for the same run are merged into one incident within a time win
 
 ### Later (managed service)
 
-A human operations centre receives the same incidents for customers with no security team. CERT-In six-hour and DPDP 72-hour reporting would be drafted from the incident record (`regulatory_clock_start`). That is a separate business decision, covered in [HARD-PROBLEMS.md](../HARD-PROBLEMS.md), problem 7.
+A human operations centre receives the same incidents for customers with no security team. CERT-In six-hour and DPDP 72-hour reporting would be drafted from the incident record (we'll add a field for when the clock starts). That is a separate business decision, covered in [HARD-PROBLEMS.md](../HARD-PROBLEMS.md), problem 7.
 
 ## 5. Playbooks to write (M2 to M5)
 

@@ -116,9 +116,9 @@ def _arg_state(args: dict[str, Any], name: str, m: ArgMatcher) -> bool | None:
     if m.equals is not None and value != m.equals:
         return False
     if m.regex is not None:
-        if not isinstance(value, str):
-            result = None
-        elif not re.search(m.regex, value[:MAX_REGEX_INPUT]):
+        if not isinstance(value, str) or len(value) > MAX_REGEX_INPUT:
+            result = None  # can't be judged: a deny rule fails closed, so padding can't dodge it
+        elif not re.search(m.regex, value):
             return False
     if m.max_length is not None:
         if not isinstance(value, str):
@@ -145,7 +145,7 @@ class PolicyEngine:
         m = rule.match
         if m.upstream is not None and m.upstream != upstream:
             return False
-        if m.tool is not None and not fnmatch.fnmatchcase(tool, m.tool):
+        if m.tool is not None and not fnmatch.fnmatchcase(tool.lower(), m.tool.lower()):
             return False
         if m.args:
             if args is None:  # listing: argument matchers cannot be evaluated

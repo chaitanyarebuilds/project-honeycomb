@@ -1,6 +1,10 @@
-# M0 config: transparent pass-through, one stdio upstream. Policy rules arrive in M1.
+# Starter config: one stdio upstream, learning mode, two decoy tools. Copy it and change it.
 schema_version: 1
 state_dir: .honeycomb
+decoys:
+  count: 2
+  on_trip:
+    response: tarpit
 upstreams:
   sample:
     transport: stdio

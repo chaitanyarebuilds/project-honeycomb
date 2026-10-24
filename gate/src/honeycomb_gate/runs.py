@@ -5,14 +5,12 @@ operator resumes it; resuming mints a fresh run id, so the identity that tripped
 revoked for good.
 """
 
-import json
-import os
-import tempfile
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from honeycomb_gate.locking import FileLock
+from honeycomb_gate.locking import FileLock, read_json, write_json_atomic
 
 
 def _now() -> str:
@@ -25,19 +23,10 @@ class RunControl:
         self._lock = FileLock(path.with_name(path.name + ".lock"))
 
     def _read(self) -> dict[str, dict[str, Any]]:
-        if not self.path.exists():
-            return {}
-        data: dict[str, dict[str, Any]] = json.loads(self.path.read_text("utf-8"))
-        return data
+        return read_json(self.path, {})
 
     def _write(self, data: dict[str, dict[str, Any]]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        fd, tmp = tempfile.mkstemp(dir=self.path.parent, suffix=".tmp")
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, self.path)
+        write_json_atomic(self.path, data, indent=2)
 
     def pause(self, run_id: str, reason: str, tool: str) -> None:
         with self._lock:
@@ -52,14 +41,22 @@ class RunControl:
         entry = self._read().get(run_id)
         return bool(entry and entry["status"] == "paused" and "resume_requested_by" in entry)
 
-    def inherit(self, new_run_id: str) -> list[str]:
-        """A restarted gate must not forget a pause: retire paused runs and pause the new one."""
+    def inherit(self, new_run_id: str, also_paused: Iterable[str] = ()) -> list[str]:
+        """A restarted gate must not forget a pause: retire paused runs and pause the new one.
+
+        ``also_paused`` is for runs the log says are paused but this file has lost.
+        """
         with self._lock:
             data = self._read()
-            old = [rid for rid, e in data.items() if e["status"] == "paused"]
+            old = sorted(
+                {rid for rid, e in data.items() if e["status"] == "paused"} | set(also_paused)
+            )
             if not old:
                 return []
             for rid in old:
+                data.setdefault(
+                    rid, {"reason": "recovered from the log", "tool": "-", "at": _now()}
+                )
                 data[rid]["status"] = "revoked"
                 data[rid]["superseded_by"] = new_run_id
             data[new_run_id] = {

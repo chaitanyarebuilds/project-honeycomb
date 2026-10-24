@@ -6,6 +6,7 @@ critical events are also copied to a second sink, and the chain head is checkpoi
 there, so that truncating the main log is detectable too.
 """
 
+import contextlib
 import hashlib
 import json
 import os
@@ -31,7 +32,7 @@ class LogCorruptError(RuntimeError):
     """The log cannot be appended to safely (for example a torn last line)."""
 
 
-def _ulid_like() -> str:
+def ulid_like() -> str:
     # 48-bit ms timestamp + 80 random bits, Crockford base32: sortable, ULID-shaped.
     alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
     n = (int(time.time() * 1000) << 80) | int.from_bytes(os.urandom(10))
@@ -39,7 +40,7 @@ def _ulid_like() -> str:
 
 
 def new_run_id() -> str:
-    return "run_" + _ulid_like()
+    return "run_" + ulid_like()
 
 
 def digest(payload: Any) -> str:
@@ -122,7 +123,9 @@ class EventLog:
         indexed = db.execute("SELECT COUNT(*) FROM events").fetchone()[0]
         if indexed != self._count:  # index missing or stale: rebuild from the JSONL source
             db.execute("DELETE FROM events")
-            for seq, event in enumerate(read_events(self.path), start=1):
+            for seq, event in enumerate(
+                read_events(self.path) if self.path.exists() else (), start=1
+            ):
                 self._insert(db, seq, event)
             db.commit()
         return db
@@ -158,7 +161,7 @@ class EventLog:
         with self._lock:
             event: dict[str, Any] = {
                 "schema_version": SCHEMA_VERSION,
-                "event_id": _ulid_like(),
+                "event_id": ulid_like(),
                 "ts": datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
                 "kind": kind,
                 "severity": severity,
@@ -202,13 +205,26 @@ class EventLog:
 
 
 def _append_line(path: Path, line: str) -> None:
-    """Append one line durably, creating the file readable only by its owner."""
+    """Append one line durably, creating the file readable only by its owner.
+
+    Writes raw bytes straight to the file (no buffer that could flush late). If anything fails
+    half way, the file is cut back to where it was: a half line would break the chain for good
+    and stop the gate restarting.
+    """
     fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
-    with os.fdopen(fd, "a", encoding="utf-8") as f:
-        if line:
-            f.write(line + "\n")
-        f.flush()
-        os.fsync(f.fileno())
+    try:
+        start = os.fstat(fd).st_size
+        try:
+            data = (line + "\n").encode() if line else b""
+            while data:
+                data = data[os.write(fd, data) :]
+            os.fsync(fd)
+        except OSError:
+            with contextlib.suppress(OSError):
+                os.ftruncate(fd, start)
+            raise
+    finally:
+        os.close(fd)
 
 
 def read_events(path: Path) -> Iterator[dict[str, Any]]:
@@ -252,7 +268,10 @@ def verify_chain(path: Path, checkpoints: Path | None = None) -> ChainReport:
     if checkpoints is not None and checkpoints.exists():
         with checkpoints.open(encoding="utf-8") as f:
             for line in f:
-                row = json.loads(line)
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    return ChainReport(False, n, n + 1, "second sink has a damaged line")
                 if row.get("type") != "checkpoint":
                     continue
                 if row["count"] > n:
@@ -265,6 +284,24 @@ def verify_chain(path: Path, checkpoints: Path | None = None) -> ChainReport:
 def _has_checkpoint(path: Path) -> bool:
     with path.open(encoding="utf-8") as f:
         return any('"type": "checkpoint"' in line for line in f)
+
+
+def unresumed_pauses(log: Path) -> list[str]:
+    """Run ids the log shows as paused and never resumed (a second source of truth for pauses)."""
+    paused: set[str] = set()
+    for e in read_events(log) if log.exists() else ():
+        details = e.get("details", {})
+        if e["kind"] == "session.paused":
+            paused.add(e["run_id"])
+            for older in details.get("previous_run_ids", []):  # an inherited pause replaces them
+                paused.discard(older)
+        elif e["kind"] == "session.resumed":
+            paused.discard(details.get("previous_run_id", ""))
+    return list(paused)
+
+
+def log_has_event(log: Path, kind: str) -> bool:
+    return any(e["kind"] == kind for e in read_events(log)) if log.exists() else False
 
 
 def query_events(

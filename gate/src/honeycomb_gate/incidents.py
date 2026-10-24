@@ -5,15 +5,13 @@ at 3 AM can act without reading logs first.
 """
 
 import json
-import os
-import tempfile
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from honeycomb_gate.events import _ulid_like  # noqa: PLC2701
-from honeycomb_gate.locking import FileLock
+from honeycomb_gate.events import ulid_like
+from honeycomb_gate.locking import FileLock, write_json_atomic
 from honeycomb_gate.redact import sanitize_name
 
 POSTURE_NOTE = (
@@ -42,7 +40,6 @@ class Incident:
     state: str = "open"  # open | acknowledged | closed
     acknowledged_by: str | None = None
     notifications: list[dict[str, str]] = field(default_factory=list)
-    regulatory_clock_start: str | None = None  # reserved for CERT-In / DPDP workflows
 
 
 class IncidentStore:
@@ -59,11 +56,7 @@ class IncidentStore:
                 self.save(current)
 
     def save(self, incident: Incident) -> None:
-        self.dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-        fd, tmp = tempfile.mkstemp(dir=self.dir, suffix=".tmp")
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(asdict(incident), f, indent=2)
-        os.replace(tmp, self.dir / f"{incident.id}.json")
+        write_json_atomic(self.dir / f"{incident.id}.json", asdict(incident), indent=2)
 
     def get(self, incident_id: str) -> Incident | None:
         path = self.dir / f"{incident_id}.json"
@@ -110,7 +103,7 @@ def open_decoy_incident(
     agent_id = sanitize_name(agent_id)
     short = tool.split("__", 1)[-1]
     return Incident(
-        id="inc_" + _ulid_like()[:16],
+        id="inc_" + ulid_like()[:16],
         severity="critical",
         kind="decoy.tripped",
         title=f"Agent '{agent_id}' called decoy tool '{short}'",
@@ -161,7 +154,7 @@ def open_token_incident(
     where_text = "in the arguments of a tool call" if where == "arguments" else "in a tool's result"
     planted = ", ".join(placed) if placed else "unknown"
     return Incident(
-        id="inc_" + _ulid_like()[:16],
+        id="inc_" + ulid_like()[:16],
         severity="critical",
         kind="honeytoken.used",
         title=f"Agent '{agent_id}' touched planted {kind} credential {token_id}",

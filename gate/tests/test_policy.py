@@ -117,14 +117,6 @@ def test_argument_matchers_need_a_tool_or_upstream() -> None:
         )
 
 
-@pytest.mark.parametrize("name", ["a__b", "x__y"])
-def test_upstream_names_cannot_contain_separator(name: str, tmp_path: Path) -> None:
-    cfg = tmp_path / "c.yaml"
-    cfg.write_text(yaml.safe_dump({"upstreams": {name: {"command": ["x"]}}}))
-    with pytest.raises(ValueError):
-        load_config(cfg)
-
-
 def test_deny_limits_cannot_be_bypassed_by_changing_an_argument_type_or_omitting_it() -> None:
     e = engine(
         rules=[
@@ -171,7 +163,7 @@ def test_high_impact_patterns_cover_common_dangerous_names_in_any_case() -> None
         assert not e.is_high_impact(name), name
 
 
-@pytest.mark.parametrize("name", ["a_", "A", "a b", "a.b", "1a", "", "a" * 40, "é"])
+@pytest.mark.parametrize("name", ["a__b", "x__y", "a_", "A", "a b", "a.b", "1a", "", "a" * 40, "é"])
 def test_ambiguous_upstream_names_are_rejected(name: str, tmp_path: Path) -> None:
     cfg = tmp_path / "c.yaml"
     cfg.write_text(yaml.safe_dump({"upstreams": {name: {"command": ["x"]}}}))
