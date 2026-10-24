@@ -1,17 +1,17 @@
 # Prior art: MCP gateways, scanners and decoys
 
-Status: M0 survey, 24 October 2026. Licence and feature details below come from web search summaries and third-party listings, **not from reading each repository**. The network in the build environment could not reach github.com or modelcontextprotocol.io. Every "unconfirmed" item needs a check of the repo's `LICENSE` file before we rely on it.
+Status: M0 survey, 24 October 2026. Update, 24 October 2026: ContextForge, Lasso, Thinkst Canarytokens and the official MCP specification repository have now been cloned and read. Their rows below are marked **verified**. Rows still marked unconfirmed come from search summaries and listings and need the same check. Findings are summarised in [program/ARCHITECTURE-REVIEW.md](program/ARCHITECTURE-REVIEW.md) and [program/MARKET-AND-GAPS.md](program/MARKET-AND-GAPS.md).
 
 ## Summary table
 
 | Project | What it covers (Phase 0 feature) | Licence | Confidence |
 | --- | --- | --- | --- |
-| [IBM ContextForge](https://developer.ibm.com/blogs/context-forge-mcp-gateway-now-available/) | Gateway with pre/post plugin hooks: PII, content filtering, rate limits, policy (F1, F4) | Apache-2.0 | Fairly confident: IBM's launch post and package metadata agree |
-| [Lasso Security MCP Gateway](https://www.sourcepulse.org/projects/11158170) | Plugin gateway: secret and PII masking, prompt-injection checks, tool-description scanner (F1, F3) | MIT (stated only by a [competitor's comparison](https://docs.mintmcp.com/blog/mintmcp-vs-lasso-security)) | Unconfirmed |
+| [IBM ContextForge](https://developer.ibm.com/blogs/context-forge-mcp-gateway-now-available/) | Gateway with pre/post plugin hooks: PII, content filtering, rate limits, policy (F1, F4) | Apache-2.0 | **Verified**: `LICENSE` read; last commit 23 Oct 2026; no decoy, honeytoken or definition-pinning code found by keyword search |
+| [Lasso Security MCP Gateway](https://www.sourcepulse.org/projects/11158170) | Plugin gateway: secret and PII masking, prompt-injection checks, tool-description scanner (F1, F3) | MIT | **Verified** licence; last commit 22 Jan 2026 (about nine months quiet); features still from listings |
 | [Docker MCP Gateway](https://www.docker.com/blog/docker-mcp-gateway-secure-infrastructure-for-agentic-ai/) | Container-isolated MCP servers, image signing, interceptors, secret blocking (F1) | Open source, licence not named in sources | Unconfirmed |
 | [Microsoft MCP Gateway](https://microsoft.github.io/mcp-gateway/deployment/infra/) | Kubernetes reverse proxy and management layer, C# (F1) | Not found | Unconfirmed |
 | [Snyk Agent Scan (formerly Invariant mcp-scan)](https://invariantlabs.ai/blog/introducing-mcp-scan) | Scans for tool poisoning, shadowing and rug pulls; pins tool hashes (F3) | Sources disagree (Apache-2.0 reported for the Snyk repo) | Unconfirmed |
-| [Thinkst Canarytokens](https://blog.thinkst.com/2026/06/one-for-all-the-models-out-there.html) | Honeytokens; added an MCP token type in 2026 (F5, F6 ideas) | Main repo licence unclear ("other" vs BSD-3-Clause) | Unconfirmed |
+| [Thinkst Canarytokens](https://blog.thinkst.com/2026/06/one-for-all-the-models-out-there.html) | Honeytokens; added an MCP token type in 2026 (F5, F6 ideas) | **Verified:** GPL v3 plus extra clauses that treat integrating, linking or executing it as a derivative work; Thinkst sells other licences | We may reuse ideas only ([ADR-0008](adr/0008-licence-hygiene.md)) |
 | agent-canary | Decoy MCP tools and canary strings; any call is treated as hijack (F5, F6) | MIT | Single listing |
 | HoneyMCP | "Ghost tools" as middleware for FastMCP servers (F5) | Apache-2.0 | Single listing, about 19 stars |
 | Beelzebub | General honeypot framework with an MCP honeypot mode (F5) | Not checked | Not checked |

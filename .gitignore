@@ -12,8 +12,3 @@ events/
 *.sqlite3
 .honeycomb/
 lab/results/
-
-# Private assistant context (not part of the public project)
-CLAUDE.md
-AGENTS.md
-.claude/

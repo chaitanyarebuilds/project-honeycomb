@@ -19,8 +19,8 @@ Phase 0 tests these hypotheses from the videos:
 ## 1a. Verified versions (recorded 24 October 2026)
 
 - **Python MCP SDK:** `mcp` 2.3.0 on PyPI (requires Python 3.10+). This is a new major version: servers are built with `Server(name, on_list_tools=..., on_call_tool=...)`, and `Client` accepts a `StdioServerParameters`. The M0 proxy pins `mcp>=2.3,<3`.
-- **MCP spec revision:** the SDK source references **2026-07-28** and still supports 2025-11-25 and earlier. Secondary news sources report 2026-07-28 as the latest final revision. We could not open modelcontextprotocol.io from the build environment, so this is **not yet confirmed from the official site**.
-- **Open question for Chaitanya (affects F7 and the session manager in section 4):** one source says 2026-07-28 removes the protocol-level session mechanism, and the SDK now runs a "per-request envelope" mode beside the older handshake. Run identity (F7) must therefore not depend on MCP session IDs. Proposal: the gate issues its own `run_id` per connection (stdio) or per token (HTTP). Needs your OK before M3, and the details must be re-checked against the official spec text.
+- **MCP spec revision:** **2026-07-28** is confirmed as the newest dated revision in the official `modelcontextprotocol/modelcontextprotocol` repository (folders 2024-11-05, 2025-03-26, 2025-06-18, 2025-11-25, 2026-07-28, plus `draft`). The SDK serves it and still supports 2025-11-25 and earlier. The repository is moving its licence from MIT to Apache-2.0.
+- **Sessions are gone:** the 2026-07-28 changelog removes protocol-level sessions and the `Mcp-Session-Id` header from Streamable HTTP. List endpoints no longer vary per connection, and servers needing state use explicit handles passed as tool arguments (SEP-2567). Run identity (F7) must not depend on MCP sessions. See [ADR-0002](adr/0002-gate-minted-run-identity.md).
 
 ## 2. Users
 
@@ -295,8 +295,8 @@ All services sit on an `internal: true` network.
 **M0: research spike and scaffolding (week 1)**
 
 - [x] Record the current MCP spec revision and Python SDK version here (section 1a)
-- [x] Survey the prior art in section 10 and write `docs/PRIOR-ART-MCP.md`, ending with a build-on-or-build-own recommendation for decision D1 (licences still to be confirmed by reading repos; D1 awaiting decision)
-- [x] Set up the `uv` project, ruff, mypy, pytest and a GitHub Actions CI workflow (CI not yet run on GitHub: push was blocked)
+- [x] Survey the prior art in section 10 and write `docs/PRIOR-ART-MCP.md`, ending with a build-on-or-build-own recommendation for decision D1 (D1 decided; main licences now verified)
+- [x] Set up the `uv` project, ruff, mypy, pytest and a GitHub Actions CI workflow 
 - [x] Build a transparent pass-through proxy for one stdio upstream, with event logging
 - [x] Demo: an MCP client connected through the gate to a sample server, with events visible (`policies/example.yaml`, then `honeycomb-gate events tail`)
 
@@ -367,13 +367,30 @@ Verify the current status of each, since this list reflects 2025–2026 knowledg
 
 | ID | Decision | Default until decided |
 | --- | --- | --- |
-| D1 | Build on an existing gateway or write our own proxy | Own minimal proxy for M0; revisit after the survey |
+| D1 | Build on an existing gateway or write our own proxy | **Decided 24 Oct 2026:** own thin core with a detector seam ([ADR-0001](adr/0001-own-core-with-plugin-seam.md)); revisit at the M2 gate |
 | D2 | First agent clients to support | Any standard MCP client over stdio and Streamable HTTP |
-| D3 | First approval and alert channel (Slack, Telegram, email, WhatsApp Business) | Generic webhook plus CLI |
+| D3 | First approval and alert channel (Slack, Telegram, email, WhatsApp Business) | **Decided 24 Oct 2026:** email (SMTP) plus generic webhook and CLI. Chat channels later. Credentials live only in `.env` |
 | D4 | Default mode for new deployments | Learning mode for 7 days, then prompt to switch to strict |
 | D5 | Language | Python; revisit only if D1 picks a TypeScript base |
 
 Record each decision here with its date and reason.
+
+Team assumption (24 Oct 2026): two people (the owner and the CTO) plus coding agents, so dates in the programme plan are planning targets, not promises. No legal adviser is engaged for now: everything is built and tested only on systems the project owns, and counter-injection stays off.
+
+## 11a. Approved architecture changes (24 October 2026)
+
+The owner approved ADR-0001 to 0008 from the architecture review ([program/ARCHITECTURE-REVIEW.md](program/ARCHITECTURE-REVIEW.md)). They are implemented milestone by milestone; where the sections above still say "session" or "alerts", read them through these records. Schema changes land in M1 (see backlog E1-1).
+
+| Change | Record | Affects |
+| --- | --- | --- |
+| Own thin core with a detector seam (resolves D1) | [ADR-0001](adr/0001-own-core-with-plugin-seam.md) | Section 4, D1 |
+| Gate-minted run identity; `run_id` required, `session_id` optional; "session manager" becomes "run manager" | [ADR-0002](adr/0002-gate-minted-run-identity.md) | F7, event schema, flows |
+| Deterministic data plane; control plane cannot enforce; no model in decisions | [ADR-0003](adr/0003-data-plane-control-plane-split.md) | Section 4 |
+| Enforcement levels L0 to L3 and a `posture` command | [ADR-0004](adr/0004-enforcement-levels.md) | F8, F12 |
+| Hash-chained log with a second sink, in M1 | [ADR-0005](adr/0005-tamper-evident-log.md) | F2, event schema |
+| New F13 agent inventory and run limits; F14 persistence and memory audit | [ADR-0006](adr/0006-agent-presence-and-persistence.md) | Section 5, M3, Phase 1 |
+| Incident object, response ladder and escalation replace F11 alerts; steps 3 and 4 automatic on a trip | [ADR-0007](adr/0007-incident-response-ladder.md) | F11, security defaults |
+| Licence hygiene; clean-room tokens | [ADR-0008](adr/0008-licence-hygiene.md) | F6 |
 
 ## 12. Glossary
 

@@ -74,7 +74,7 @@ Seven open problems and our current answers are in [docs/HARD-PROBLEMS.md](docs/
 | 3 | 15 to 24 months | Specialists and red-team vaccination |
 | 4 | 24 months and later | Herd immunity across organisations |
 
-The first proof is a lab. See [docs/ROADMAP.md](docs/ROADMAP.md).
+The first proof is a lab. See [docs/ROADMAP.md](docs/ROADMAP.md). How we plan and run the work is in [docs/program/](docs/program/README.md), and architecture decisions are recorded in [docs/adr/](docs/adr/README.md).
 
 ## Prior art
 

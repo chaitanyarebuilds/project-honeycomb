@@ -53,7 +53,7 @@ scripts/              Repository maintenance only
 
 ## Changes that need maintainer sign-off first
 
-Open an issue or discussion before you:
+Write an architecture decision record ([docs/adr/](adr/README.md)) and get it accepted before you:
 
 - change the architecture or a schema;
 - add a service;
