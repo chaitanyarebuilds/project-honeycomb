@@ -11,6 +11,8 @@ import anyio
 import typer
 
 from honeycomb_gate import __version__
+from honeycomb_gate.approvals import Approval, ApprovalStore
+from honeycomb_gate.baseline import Baselines
 from honeycomb_gate.config import GateConfig, load_config
 from honeycomb_gate.decoys import DecoyBook
 from honeycomb_gate.events import LogCorruptError, query_events, verify_chain
@@ -386,6 +388,99 @@ def posture(config: ConfigOpt) -> None:
     typer.echo("To go further:")
     for step in report.next_steps:
         typer.echo(f"  - {step}")
+
+
+approvals = typer.Typer(help="Calls waiting for a person's yes or no.")
+app.add_typer(approvals, name="approvals")
+
+
+def _approval_line(a: Approval) -> str:
+    when = datetime.fromtimestamp(a.created, UTC).isoformat(timespec="seconds")
+    names = f" ({', '.join(sanitize_name(n) for n in a.approvers)})" if a.approvers else ""
+    return (
+        f"{a.id}  {a.status:<8} {when}  {a.agent_id}  {sanitize_name(a.tool)}  {a.rule_id}{names}"
+    )
+
+
+@approvals.command("list")
+def approvals_list(
+    config: ConfigOpt, all_: Annotated[bool, typer.Option("--all", help="Include closed.")] = False
+) -> None:
+    """Show requests waiting for an answer (or all of them with --all)."""
+    shown = [
+        a for a in ApprovalStore(_cfg(config).approvals_dir).all() if all_ or a.status == "pending"
+    ]
+    for a in shown:
+        typer.echo(_approval_line(a))
+    if not shown:
+        typer.echo("Nothing is waiting for approval.")
+
+
+@approvals.command("show")
+def approvals_show(approval_id: str, config: ConfigOpt) -> None:
+    """Everything the gate knows about one request, so you can decide."""
+    a = ApprovalStore(_cfg(config).approvals_dir).get(approval_id)
+    if a is None:
+        _fail(f"Unknown approval {approval_id}.")
+    typer.echo(_approval_line(a))
+    typer.echo(f"needs {a.quorum} approver(s); {a.blast_radius}")
+    typer.echo(f"arguments (secrets hidden): {json.dumps(a.args_redacted, default=str)[:2000]}")
+    for d in a.decisions:
+        typer.echo(f"  {d['verdict']} by {sanitize_name(d['by'])}")
+
+
+def _decide(approval_id: str, config: Path, verdict: str, who: str) -> None:
+    cfg = _cfg(config)
+    result = ApprovalStore(cfg.approvals_dir).decide(
+        approval_id, who, verdict, ttl_s=cfg.defaults.approval_ttl_s
+    )
+    if result != "ok":
+        _fail(
+            f"Cannot {verdict} {approval_id}: {result}. See 'honeycomb-gate approvals list --all'."
+        )
+    typer.echo(f"Recorded: {verdict} for {approval_id} by {sanitize_name(who)}.")
+
+
+AsOpt = Annotated[str, typer.Option("--as", help="Who is answering (default: your login name).")]
+
+
+@approvals.command("approve")
+def approvals_approve(approval_id: str, config: ConfigOpt, who: AsOpt = "") -> None:
+    """Say yes. A rule with quorum 2 needs two different people to do this."""
+    _decide(approval_id, config, "approve", who or getpass.getuser())
+
+
+@approvals.command("deny")
+def approvals_deny(approval_id: str, config: ConfigOpt, who: AsOpt = "") -> None:
+    """Say no. One refusal ends the request."""
+    _decide(approval_id, config, "deny", who or getpass.getuser())
+
+
+baseline = typer.Typer(help="What is normal for each agent.")
+app.add_typer(baseline, name="baseline")
+
+
+@baseline.command("show")
+def baseline_show(config: ConfigOpt, agent: Annotated[str, typer.Option()] = "") -> None:
+    """Print what the gate has learned about each agent."""
+    profiles = Baselines.load(_cfg(config).baselines_path)
+    for name, p in sorted(profiles.items()):
+        if agent and name != agent:
+            continue
+        tools = ", ".join(f"{t} x{n}" for t, n in sorted(p["tools"].items()))
+        peaks = sorted(p["peaks"].values())
+        typer.echo(
+            f"{sanitize_name(name)}: {p['runs']} run(s), upstreams {', '.join(p['upstreams'])}"
+        )
+        typer.echo(f"  tools: {tools or 'none yet'}")
+        if peaks:
+            typer.echo(
+                f"  busiest minute per run: top {peaks[-1]}, median {peaks[len(peaks) // 2]}"
+            )
+        if p["size_peaks"]:
+            typer.echo(f"  answer size: largest {max(p['size_peaks'].values())} bytes")
+    if not profiles:
+        typer.echo("Nothing learned yet. Baselines build up as agents use the gate.")
 
 
 agents = typer.Typer(help="The agents this gate knows about.")

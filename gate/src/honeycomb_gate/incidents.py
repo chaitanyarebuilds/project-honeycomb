@@ -40,6 +40,8 @@ class Incident:
     state: str = "open"  # open | acknowledged | closed
     acknowledged_by: str | None = None
     notifications: list[dict[str, str]] = field(default_factory=list)
+    escalations: int = 0  # how many times it was sent again because nobody acknowledged it
+    escalated_at: str | None = None
 
 
 class IncidentStore:
@@ -71,6 +73,38 @@ class IncidentStore:
             (Incident(**json.loads(p.read_text("utf-8"))) for p in self.dir.glob("*.json")),
             key=lambda i: i.opened_at,
         )
+
+    def due_for_escalation(self, now: datetime, after_s: int, limit: int) -> list[Incident]:
+        """Open high or critical incidents that have gone unanswered for ``after_s`` seconds."""
+        if after_s <= 0:
+            return []
+        due = []
+        for i in self.all():
+            if i.state != "open" or i.severity not in {"high", "critical"}:
+                continue
+            if i.escalations >= limit:
+                continue
+            since = datetime.fromisoformat(i.escalated_at or i.opened_at)
+            if (now - since).total_seconds() >= after_s:
+                due.append(i)
+        return due
+
+    def record_escalation(self, incident_id: str, now: datetime, after_s: int, limit: int) -> int:
+        """Count one more escalation unless it was acknowledged, is not due or is at its limit.
+
+        The checks are repeated under the lock, so two gates can't both send the same one.
+        """
+        with self._lock:
+            incident = self.get(incident_id)
+            if incident is None or incident.state != "open" or incident.escalations >= limit:
+                return 0
+            since = datetime.fromisoformat(incident.escalated_at or incident.opened_at)
+            if (now - since).total_seconds() < after_s:
+                return 0
+            incident.escalations += 1
+            incident.escalated_at = now.isoformat(timespec="seconds")
+            self.save(incident)
+            return incident.escalations
 
     def acknowledge(self, incident_id: str, by: str) -> bool:
         with self._lock:

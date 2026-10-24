@@ -13,6 +13,19 @@ upstreams:
     env: { HC_LAB_DOCS: /data/docs }
 agents:
   support-bot: { scopes: ["*"] }
+defaults: { approval_wait_s: 3, approval_timeout_s: 12, approval_ttl_s: 120 }
+rules:
+  - id: approve-rotate
+    match: { tool: "crm__rotate_keys" }
+    action: approve
+    quorum: 2
+  - id: approve-disable
+    match: { tool: "crm__disable_user" }
+    action: approve
+  - id: cap-exports
+    match: { tool: "crm__export_report" }
+    action: allow
+    caps: { max_rows: 100, per_minute: 3 }
 decoys:
   count: 1
   vocabulary: [export_all_customer_data]

@@ -34,6 +34,8 @@ You need Python 3.12 or newer and [uv](https://docs.astral.sh/uv/). On Windows 1
 | Which enforcement level is really in place | `uv run honeycomb-gate posture --config ...` |
 | Run the Docker lab (S3 and S1) | `uv run python -m lab.run_lab` (needs Docker; `--keep` leaves it running, `--no-build` reuses the image) |
 | Run the egress proxy by hand | `uv run honeycomb-egress --listen 127.0.0.1:3128 --allow partner-api:8080 --log egress.jsonl --tokens .honeycomb/tokens.json` |
+| Answer a call that needs approval | `uv run honeycomb-gate approvals list --config ...`, then `approvals show <id>`, then `approvals approve <id> --as <your name>` (or `deny`). A rule with quorum 2 needs two different names |
+| See what the gate learned about each agent | `uv run honeycomb-gate baseline show --config ...` |
 | Check email settings | copy `.env.example` to `.env`, fill it in, then `uv run honeycomb-gate notify test --config ...` |
 | Review and approve a changed tool | `uv run honeycomb-gate tools list --config ...`, then `tools show upstream__tool --config ...`, then `tools approve upstream__tool --hash <pending hash> --config ...` |
 | Lab (planned, M2 onward) | `docker compose -f lab/docker-compose.yml up --build -d`, then `uv run lab-run --scenario all` |

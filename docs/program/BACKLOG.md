@@ -64,13 +64,13 @@ Status: proposal, 24 October 2026. Every item has an ID, an owning role, a size 
 
 | ID | Item | Role | Size | Acceptance |
 | --- | --- | --- | --- | --- |
-| E5-1 | Approval broker: CLI and webhook, timeout denies | Platform | L | Each decision logged with approver |
-| E5-2 | Quorum and caps (rows, bytes, recipients, rate) | Platform | L | Caps enforced; quorum of N of M |
-| E5-3 | Escalation and acknowledgement (**ADR-0007**) | Platform | M | Unacknowledged critical escalates after N minutes |
-| E5-4 | Baseline profiler in learning mode | Detection | L | New tool, rate and volume deviations flagged |
+| E5-1 | Approval broker: CLI and webhook, timeout denies | Platform | L | Done in M4: each decision logged with approver |
+| E5-2 | Quorum and caps (rows, bytes, recipients, rate) | Platform | L | Done in M4 for rows, bytes and rate (recipient limits stay an argument matcher); quorum of N |
+| E5-3 | Escalation and acknowledgement (**ADR-0007**) | Platform | M | Done in M4: an unacknowledged high or critical incident escalates after N seconds |
+| E5-4 | Baseline profiler in learning mode | Detection | L | Done in M4: new tool, rate and volume deviations flagged |
 | E5-5 | Alert deduplication and flood limit | Platform | M | Flood test produces one incident |
 | E5-6 | Abuse tests: forced approvals, response triggering | Security | M | Attempts blocked; documented |
-| E5-7 | Scenarios S4 and S0 | Researcher | L | S4 passes; S0 zero high or critical alerts |
+| E5-7 | Scenarios S4 and S0 | Researcher | L | Done in M4: S4 passes (test and Docker lab); S0 zero high or critical alerts |
 
 ## E6 Memory, lab report, release (M5)
 

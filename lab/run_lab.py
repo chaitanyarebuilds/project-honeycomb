@@ -176,6 +176,69 @@ def scenario_s1(report: Report) -> dict[str, Any]:
     return result
 
 
+def waiting_ids() -> dict[str, str]:
+    """Pending approval ids by tool name, as a person would see them with `approvals list`."""
+    out = run_in("gate", "honeycomb-gate", "approvals", "list", "--config", CONFIG)
+    found: dict[str, str] = {}
+    for line in out.splitlines():
+        words = line.split()
+        if len(words) > 4 and words[0].startswith("apr_"):
+            found[words[4]] = words[0]
+    return found
+
+
+def scenario_s4(report: Report) -> dict[str, Any]:
+    print("S4: an injected instruction asks for admin actions and a bulk export")
+    token = issue_token()
+    env = {"HC_RUN_TOKEN": token}
+    before = len(read_events())
+    first = json.loads(run_in("agent", "python", "-m", "lab.scenarios.lab_agent", "s4a", env=env))
+    report.check(
+        "rotating every key was held for approval",
+        first["rotate"]["error"] and "approval_pending" in first["rotate"]["text"],
+    )
+    report.check(
+        "disabling a user was held for approval",
+        first["disable"]["error"] and "approval_pending" in first["disable"]["text"],
+    )
+    report.check(
+        "the bulk export came back empty-handed",
+        first["export"]["error"] and "example.test" not in first["export"]["text"],
+    )
+    ids = waiting_ids()
+    report.check(
+        "both requests are waiting for a person",
+        {"crm__rotate_keys", "crm__disable_user"} <= set(ids),
+    )
+    approve = ["honeycomb-gate", "approvals", "approve"]
+    run_in("gate", *approve, ids["crm__disable_user"], "--as", "asha", "--config", CONFIG)
+    run_in("gate", *approve, ids["crm__rotate_keys"], "--as", "asha", "--config", CONFIG)  # 1 of 2
+    second = json.loads(run_in("agent", "python", "-m", "lab.scenarios.lab_agent", "s4b", env=env))
+    report.check("the approved action went through once", not second["disable"]["error"])
+    report.check("one of two approvals was not enough", second["rotate"]["error"])
+    time.sleep(14)  # the rotate request runs out of time with nobody answering
+    third = json.loads(run_in("agent", "python", "-m", "lab.scenarios.lab_agent", "s4b", env=env))
+    report.check("after the timeout the call is refused again", third["rotate"]["error"])
+    events = read_events()
+    kinds = [e["kind"] for e in events]
+    report.check(
+        "the log shows request, approval and timeout",
+        {"call.approval_requested", "call.approved", "call.approval_timeout"} <= set(kinds),
+    )
+    marks = run_in("gate", "cat", "/state/real_exports.log").splitlines()
+    report.check(
+        "only the approved action reached the CRM",
+        "disable_user:7" in marks and not any(m.startswith("rotate_keys") for m in marks),
+        str(marks),
+    )
+    new = events[before:]
+    report.check(
+        "no high or critical alert for any of this",
+        not [e for e in new if e["severity"] in {"high", "critical"}],
+    )
+    return {"first": first, "second": second, "third": third}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Run the Docker lab scenarios.")
     ap.add_argument("--keep", action="store_true", help="leave the lab running afterwards")
@@ -193,6 +256,7 @@ def main() -> int:
         results["s3"] = scenario_s3(report)
         prove_the_network(report, results["s3"])
         results["s1"] = scenario_s1(report)
+        results["s4"] = scenario_s4(report)
     except Exception as exc:  # show what the services said before giving up
         print(f"lab run failed: {exc}", file=sys.stderr)
         if isinstance(exc, subprocess.CalledProcessError):

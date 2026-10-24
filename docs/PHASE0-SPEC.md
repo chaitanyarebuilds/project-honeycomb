@@ -112,6 +112,7 @@ flowchart LR
 **F4. Policy engine.**
 
 - Policies are YAML and use first-match rules. Actions are `allow`, `deny` or `approve`.
+- Caps: `per_minute` counts calls per agent and rule across runs, so a fresh run does not reset it. `max_rows` counts the items of the biggest JSON list at any depth (also in structured content and embedded resources), a map of records by its entries, or else the non-empty lines of text. A call that would be over its `per_minute` cap is refused before anyone is asked to approve it. When a result is over a size cap the call has already run upstream, so the agent is told the tool ran, that its answer was withheld, and not to repeat it; `call.completed` records `withheld: cap_max_rows` (or `cap_max_result_bytes`).
 - Rules can match on upstream server, tool name glob, and argument matchers (equals, regex, max length, max items). They can also set rate limits and blast-radius caps (max rows, max bytes, max recipients).
 - Two modes: `learning` (unknown tools allowed and logged) and `strict` (unknown tools denied).
 - Any internal error is a deny for tools marked high-impact.
@@ -152,21 +153,23 @@ flowchart LR
 **F9. Behaviour baselines.**
 
 - Keep a rolling profile per `agent_id`: tools used, call rate, argument and response sizes, upstream servers, and time of day.
-- After a configurable number of sessions in learning mode, flag deviations: a new tool, a rate above the 99th percentile times k, or a data-volume spike.
+- After a configurable number of runs (`baseline.min_runs`, default 5), flag deviations with `baseline.deviation` (severity medium): a tool this agent never used, more calls in a minute than k times the 99th percentile of earlier runs' busiest minutes (and never below `rate_floor`), or an answer larger than k times the 99th percentile of the biggest answers of earlier runs (and over 4 KB). Each run is judged against the other runs, never against its own history, so a slow ramp inside one run is caught. A deviation is a signal for a person, not a block. A run that deviates stops teaching the baseline, so it can't make its own behaviour normal. Time of day is recorded but not judged. `honeycomb-gate baseline show` prints what was learned.
 - Stretch goal: flag two agents that suddenly issue near-identical unusual calls (the "agents adopting each other's goals" pattern).
 
 **F10. Governor and approvals.**
 
-- An approval request carries the run, tool, redacted arguments, the rule that fired, and the blast radius.
-- Channels: a generic webhook adapter plus a CLI (`honeycomb-gate approvals list|approve|deny`). Slack, Telegram or email come later (open decision D3).
-- A timeout means deny. Critical rules can require a quorum (N of M approvers).
-- Every decision is logged with the approver's identity.
+- An approval request carries the run, tool, redacted arguments, the rule that fired, and the blast radius (whether the tool is high-impact, how many approvers it needs, its caps).
+- The call waits a short while (`defaults.approval_wait_s`, 20 s) so a quick answer lets it through on the first try. If nobody has answered it returns at once with `approval_pending` and the request id, and the agent (or the user) repeats the same call after a person approves. The approval is bound to the run, the tool and the exact arguments, can be used once, and lapses after `defaults.approval_ttl_s` (10 minutes). Asking again while a request is open finds the same request.
+- Channels: the CLI (`honeycomb-gate approvals list|show|approve|deny`), plus the same email and webhook as incidents, which carry the request and the commands to answer it. Chat channels come later (open decision D3).
+- A request nobody answers in `defaults.approval_timeout_s` (120 s) is denied, and a late yes is refused. Quorum needs N different approvers (names are compared ignoring case, spacing and look-alike characters), and one refusal ends the request.
+- Every decision is logged with the approver's name. In Phase 0 that name is typed by the operator (`--as`, or the login name), so quorum guards against a slip, not against someone willing to lie. Real sign-in comes later.
+- At most 50 requests can be open per agent; past that, calls are refused.
 
 **F11. Alerts and incidents** (see ADR-0007).
 
 - A trip opens an incident (a JSON file under `incidents/`). Its message answers five questions: what happened, how sure we are, what the gate already did, what to do now, and how protected we are. `honeycomb-gate incidents list|show|ack`.
 - Incidents go out by email (SMTP, with settings from the environment or `.env`, never from the repo) and a generic webhook. If sending fails, the gate logs `notify.failed`; containment is not weakened, because the run is already paused. `honeycomb-gate notify test` sends a labelled test message.
-- Escalation when nobody acknowledges arrives in M4.
+- Escalation: a high or critical incident that nobody has acknowledged is sent again after `notify.escalate_after_s` (default 600), and every time that long passes while it stays open, up to `notify.escalate_max` (3) extra messages. Each one is logged as `incident.escalated`.
 - Severity levels are info, low, medium, high and critical. Repeats are deduplicated within a time window.
 
 **F12. CLI.**
@@ -183,7 +186,7 @@ flowchart LR
 - `identity issue|renew|revoke|list|rotate-key`
 - `agents list`
 - `events tail|query|verify`
-- `approvals list|approve|deny`
+- `approvals list|show|approve|deny`
 - `baseline show`
 - `posture` (ADR-0004)
 - `version`
@@ -220,7 +223,7 @@ Changes made in M1 (ADR-0002, ADR-0005; schema v1 had not been released yet):
 
 `call.allowed` is written before the call is forwarded and `call.completed` after it (with `latency_ms`), so a call never happens without a record. The checkpoint rows written to the second sink are not events. Upstream names are lower-case letters, digits and `-` (1 to 32 characters, starting with a letter). Honeytoken events carry `details.honeytoken_id`, not `token_id`, because the redactor hides anything named like a secret. `args_redacted` goes through secret redaction before it is stored.
 
-Event kinds. The approval, egress, baseline and memory kinds arrive in M3 to M5 and are not emitted yet:
+Event kinds. The memory kinds arrive in M5 and are not emitted yet:
 
 - `session.started`, `session.paused`, `session.ended`
 - `resource.listed`, `resource.read`, `prompt.listed`, `prompt.fetched`
@@ -228,13 +231,13 @@ Event kinds. The approval, egress, baseline and memory kinds arrive in M3 to M5 
 - `call.allowed`, `call.completed`, `call.denied`, `call.approval_requested`, `call.approved`, `call.approval_denied`, `call.approval_timeout`
 - `decoy.tripped`, `decoy.collision`, `honeytoken.used`, `egress.blocked`
 - `egress.malformed`
-- `incident.opened`, `incident.notified`, `incident.deduplicated`, `notify.failed`
+- `incident.opened`, `incident.notified`, `incident.escalated`, `incident.deduplicated`, `notify.failed`
 - `identity.issued`, `identity.revoked`, `identity.rejected`, `session.resumed`, `agent.unknown`
 - `baseline.deviation`
 - `memory.rule_learned`, `memory.rule_matched`
 - `gate.error`
 
-**Policy file (sketch).** M1 implements `mode`, `high_impact`, `rules` with `allow` and `deny`, and the matchers `tool` (glob), `upstream`, and per-argument `equals`, `regex`, `max_length` and `max_items`. `max_length` and `max_items` are limits: the matcher fires when the argument **exceeds** them, so a rule can target oversized arguments. `approve`, `quorum` and `caps` are refused at load time until M4, and unknown fields are rejected. Argument matchers must name a `tool` or `upstream`. A deny rule treats a missing or wrong-typed argument as a match.
+**Policy file (sketch).** M1 implements `mode`, `high_impact`, `rules` with `allow` and `deny`, and the matchers `tool` (glob), `upstream`, and per-argument `equals`, `regex`, `max_length` and `max_items`. `max_length` and `max_items` are limits: the matcher fires when the argument **exceeds** them, so a rule can target oversized arguments. `approve` rules take a `quorum` (1 to 10, default 1) and any allowing rule can carry `caps`: `per_minute` (calls per agent and rule), `max_rows` and `max_result_bytes` (limits on one answer). Caps and quorum are checked when the file loads, and unknown fields are rejected. Argument matchers must name a `tool` or `upstream`. A deny rule treats a missing or wrong-typed argument as a match.
 
 These can also be configured:
 
@@ -242,6 +245,9 @@ These can also be configured:
 - `agents.<id>.scopes`: tool globs (`upstream__tool`) a run for that agent may use. Default `["*"]`.
 - `http`: `host` (default `127.0.0.1`), `port` (8765), `allowed_hosts` (extra Host header values for a container or reverse proxy, matched exactly including the port, so `gate:8765` or `gate:*`) and `max_body_bytes`.
 - `deployment.network_enforced`: what the operator declares about the network. `honeycomb-gate posture` reports it as declared until a lab test writes the proof file.
+- `defaults`: `approval_wait_s` (20), `approval_timeout_s` (120) and `approval_ttl_s` (600).
+- `baseline`: `enabled`, `min_runs`, `k`, `rate_floor` and `samples`.
+- `notify.escalate_after_s` and `notify.escalate_max`.
 - `egress`: `log` (the proxy's JSON lines file), `sources` (source address to agent id) and `poll_s`.
 - `decoys`: `count`, `vocabulary`, `placement`, `on_trip.response`, `on_trip.tarpit_delay_s`.
 - `notify`: `email`, `webhook_url`, `dedupe_window_s`.
@@ -367,10 +373,10 @@ All services sit on an `internal: true` network.
 
 **M4: governors and baselines (weeks 7–8)**
 
-- [ ] Approvals, quorum and caps (F10, F4)
-- [ ] Baselines in learning mode (F9)
-- [ ] Alerts webhook (F11)
-- [ ] S4 passes; S0 shows zero false positives
+- [x] Approvals, quorum and caps (F10, F4)
+- [x] Baselines in learning mode (F9)
+- [x] Alerts webhook and escalation (F11): approval requests and unacknowledged incidents go to the same email and webhook
+- [x] S4 passes (stdio test and Docker lab); S0 shows zero false positives (50 benign sessions, `test_scenario_s0`)
 
 **M5: memory, lab report and v0.1.0 (weeks 9–10)**
 

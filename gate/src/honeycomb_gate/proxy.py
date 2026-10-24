@@ -26,6 +26,7 @@ from mcp.server.stdio import stdio_server
 from pydantic import BaseModel
 
 from honeycomb_gate import __version__
+from honeycomb_gate.baseline import Baselines
 from honeycomb_gate.config import GateConfig
 from honeycomb_gate.decoys import DecoyBook, tarpit_delay, tarpit_text
 from honeycomb_gate.events import (
@@ -38,6 +39,7 @@ from honeycomb_gate.events import (
     unresumed_pauses,
     verify_chain,
 )
+from honeycomb_gate.governor import Governor
 from honeycomb_gate.identity import Claims, Identities, Inventory, KeyRing
 from honeycomb_gate.incidents import (
     Incident,
@@ -115,6 +117,8 @@ class Gate:
         self.decoys: DecoyBook | None = None  # built once the upstreams are known
         self.default = Run(log.run_id, config.agent_id, log)  # the stdio connection
         self.identities = Identities(config.identities_path, KeyRing(config.keys_path))
+        self.governor = Governor(self)
+        self.baselines = Baselines(config.baselines_path, config.baseline)
         self.inventory = Inventory(config.inventory_path)
         self.http_runs: dict[str, Run] = {}
         self.require_claims = False  # set when serving over HTTP: no token, no run
@@ -736,6 +740,19 @@ class Gate:
             decision = self.policy.evaluate(upstream, params.name, args)
             if decision.action == "deny":
                 return deny(decision.reason, decision.rule_id)
+            if not self.governor.within_rate(run, decision, record=False):
+                return deny("rate_limit", decision.rule_id, "medium")  # before using an approval
+            if decision.action == "approve":  # a person has to say yes first
+                answer = await self.governor.approval(run, decision, params.name, base, deny)
+                if answer is not None:
+                    return answer
+                # The wait can be long: look at the tool again before acting on the answer.
+                tools = await self._fetch(upstream, max_age=self.config.recheck_ttl_s)
+                again = tools.get(tool_name)
+                if again is None or self._check_pin(run, upstream, again).status != APPROVED:
+                    return deny("changed_while_waiting", "pinning", "medium")
+            if not self.governor.within_rate(run, decision):
+                return deny("rate_limit", decision.rule_id, "medium")
             if run.paused:  # another call tripped while this one was waiting: do not forward
                 return deny("run_paused", "run-control", "medium")
             # Record the decision before the action: if the log cannot be written, the call
@@ -759,13 +776,33 @@ class Gate:
             return await self._trip_token(run, found[0], "result", params.name, base, args)
         if run.paused:  # the run tripped while this call was in flight: its result is withheld
             return deny("run_paused", "run-control", "medium")
+        over = self.governor.over_result_cap(result, decision)
         run.emit(
             "call.completed",
             upstream=upstream,
             tool=params.name,
             latency_ms=int((time.monotonic() - started) * 1000),
-            details={"is_error": bool(result.is_error)},
+            details={"is_error": bool(result.is_error), **({"withheld": over} if over else {})},
         )
+        if over:  # it ran, so say so: the agent must not repeat a call that already happened
+            return _blocked(
+                "This tool ran, but honeycomb-gate withheld its answer because it was larger "
+                f"than the rule allows ({over}). Do not repeat the call."
+            )
+        try:  # a baseline problem is logged, and never changes what happens to the call
+            answer_size = sum(len(getattr(c, "text", "") or "") for c in result.content)
+            for found_dev in self.baselines.observe(
+                run.id, run.agent_id, upstream, params.name, size, answer_size
+            ):
+                run.emit(
+                    "baseline.deviation", severity="medium", upstream=upstream,
+                    tool=params.name, details=found_dev,
+                )  # fmt: skip
+        except Exception as exc:
+            run.emit(
+                "gate.error", severity="medium",
+                details={"error": type(exc).__name__, "while": "baseline"},
+            )  # fmt: skip
         return result
 
 
@@ -833,6 +870,7 @@ async def open_gate(
                 "session.started", details={"upstreams": list(config.upstreams), "via": front_door}
             )
             gate.default.emit("identity.issued", details={"how": "minted by the gate at start-up"})
+            governor = asyncio.create_task(gate.governor.loop())
             watcher = None
             if config.egress.log is not None:
                 from honeycomb_gate.egress_watch import EgressWatch  # imports this module
@@ -841,9 +879,11 @@ async def open_gate(
             try:
                 yield gate
             finally:
-                if watcher is not None:
-                    watcher.cancel()
-                    await asyncio.gather(watcher, return_exceptions=True)
+                for task in (governor, watcher):
+                    if task is not None:
+                        task.cancel()
+                        await asyncio.gather(task, return_exceptions=True)
+                gate.baselines.flush()
             await gate.drain()  # let incident emails finish before the process exits
             gate.default.emit("session.ended")
     finally:

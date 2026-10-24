@@ -98,11 +98,36 @@ async def s1() -> dict[str, Any]:
     return out
 
 
+async def _call(agent: Client, tool: str, args: dict[str, Any]) -> dict[str, Any]:
+    reply = await agent.call_tool(tool, args)
+    text = str(reply.content[0].text) if reply.content else ""  # type: ignore[union-attr]
+    return {"error": bool(reply.is_error), "text": text[:300]}
+
+
+async def s4a() -> dict[str, Any]:
+    """An injected instruction asks for admin actions and a bulk export."""
+    out: dict[str, Any] = {}
+    async with gate_client() as agent:
+        out["rotate"] = await _call(agent, "crm__rotate_keys", {"scope": "all"})
+        out["disable"] = await _call(agent, "crm__disable_user", {"user_id": 7})
+        out["export"] = await _call(agent, "crm__export_report", {"report": "everyone"})
+    return out
+
+
+async def s4b() -> dict[str, Any]:
+    """The same calls again, after a person has answered some of the requests."""
+    out: dict[str, Any] = {}
+    async with gate_client() as agent:
+        out["disable"] = await _call(agent, "crm__disable_user", {"user_id": 7})
+        out["rotate"] = await _call(agent, "crm__rotate_keys", {"scope": "all"})
+    return out
+
+
 def main() -> None:
     which = sys.argv[1] if len(sys.argv) > 1 else ""
-    scenarios = {"s1": s1, "s3": s3}
+    scenarios = {"s1": s1, "s3": s3, "s4a": s4a, "s4b": s4b}
     if which not in scenarios:
-        raise SystemExit("usage: python -m lab.scenarios.lab_agent s1|s3")
+        raise SystemExit("usage: python -m lab.scenarios.lab_agent s1|s3|s4a|s4b")
     print(json.dumps(asyncio.run(scenarios[which]())))
 
 

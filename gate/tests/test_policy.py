@@ -90,15 +90,32 @@ def test_a_rule_that_errors_at_runtime_fails_closed_if_it_is_a_deny_rule(
 @pytest.mark.parametrize(
     "rule",
     [
-        {"id": "r", "action": "approve"},
-        {"id": "r", "action": "allow", "quorum": 2},
-        {"id": "r", "action": "allow", "caps": {"per_minute": 3}},
+        {"id": "r", "action": "allow", "quorum": 2},  # quorum belongs to approve rules
+        {"id": "r", "action": "approve", "quorum": 0},
+        {"id": "r", "action": "approve", "quorum": 11},
+        {"id": "r", "action": "allow", "caps": {"per_hour": 3}},  # not a cap we know
+        {"id": "r", "action": "allow", "caps": {"per_minute": 0}},
+        {"id": "r", "action": "deny", "caps": {"per_minute": 3}},  # nothing to cap
         {"id": "r", "action": "allow", "unknown_field": 1},
     ],
 )
-def test_unsupported_features_are_refused_loudly(rule: dict[str, Any]) -> None:
+def test_nonsense_rules_are_refused_loudly(rule: dict[str, Any]) -> None:
     with pytest.raises(ValidationError):
         PolicyConfig.model_validate({"rules": [rule]})
+
+
+def test_approve_rules_and_caps_come_through_the_decision() -> None:
+    rules = [
+        {"id": "ap", "match": {"tool": "a__rotate*"}, "action": "approve", "quorum": 2},
+        {"id": "cap", "match": {"tool": "a__export"}, "action": "allow",
+         "caps": {"per_minute": 3, "max_rows": 100}},
+    ]  # fmt: skip
+    e = engine(rules=rules)
+    d = e.evaluate("a", "a__rotate_keys", {})
+    assert (d.action, d.rule_id, d.quorum, d.hide) == ("approve", "ap", 2, False)
+    d = e.evaluate("a", "a__export", {})
+    assert d.action == "allow" and d.caps == {"per_minute": 3, "max_rows": 100}
+    assert e.evaluate("a", "a__other", {}).caps == {}  # a look-alike tool gets no caps
 
 
 def test_duplicate_rule_ids_and_bad_config_are_rejected(tmp_path: Path) -> None:
@@ -169,3 +186,17 @@ def test_ambiguous_upstream_names_are_rejected(name: str, tmp_path: Path) -> Non
     cfg.write_text(yaml.safe_dump({"upstreams": {name: {"command": ["x"]}}}))
     with pytest.raises(ValueError):
         load_config(cfg)
+
+
+def test_approve_and_capped_rules_cover_arguments_that_cannot_be_judged() -> None:
+    """Sending the argument as a string, or leaving it out, must not dodge an approve rule."""
+    bulk = {"id": "ap", "match": {"tool": "a__send", "args": {"to": {"max_items": 5}}},
+            "action": "approve"}  # fmt: skip
+    capped = {"id": "cap", "match": {"tool": "a__export", "args": {"ids": {"max_items": 5}}},
+              "action": "allow", "caps": {"per_minute": 1}}  # fmt: skip
+    e = engine(rules=[bulk, capped])
+    assert e.evaluate("a", "a__send", {"to": ["x"] * 9}).action == "approve"
+    for args in ({"to": "a@x," * 100}, {}, {"to": None}):
+        assert e.evaluate("a", "a__send", args).action == "approve", args
+    assert e.evaluate("a", "a__send", {"to": ["x"] * 2}).action == "allow"  # a real small send
+    assert e.evaluate("a", "a__export", {"ids": "1,2,3"}).caps == {"per_minute": 1}

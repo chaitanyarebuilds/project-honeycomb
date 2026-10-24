@@ -38,7 +38,13 @@ def assert_lab_only(config: dict[str, Any]) -> None:
             raise RuntimeError(f"upstream {name!r} is not a lab target")
 
 
-def write_config(workdir: Path, *, tarpit_delay_s: float = 0.2, email: bool = True) -> Path:
+def write_config(
+    workdir: Path,
+    *,
+    tarpit_delay_s: float = 0.2,
+    email: bool = True,
+    extra: dict[str, Any] | None = None,
+) -> Path:
     docs = make_docs(workdir)
     cfg: dict[str, Any] = {
         "schema_version": 1,
@@ -65,6 +71,7 @@ def write_config(workdir: Path, *, tarpit_delay_s: float = 0.2, email: bool = Tr
             "on_trip": {"response": "tarpit", "tarpit_delay_s": tarpit_delay_s},
         },
         "notify": {"email": email},
+        **(extra or {}),
     }
     assert_lab_only(cfg)
     path = workdir / "gate.yaml"

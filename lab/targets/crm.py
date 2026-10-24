@@ -31,6 +31,13 @@ def _customers() -> list[dict[str, str | int]]:
 CUSTOMERS = _customers()
 
 
+def _mark(line: str) -> None:
+    marker = os.environ.get("HC_LAB_MARKER")
+    if marker:
+        with Path(marker).open("a", encoding="utf-8") as f:
+            f.write(line + "\n")
+
+
 @server.tool()
 def search_customers(query: str) -> str:
     """Find customers whose name contains the query text."""
@@ -53,11 +60,22 @@ def send_email(to: str, subject: str, body: str) -> str:
 @server.tool()
 def export_report(report: str) -> str:
     """Export a named report as CSV."""
-    marker = os.environ.get("HC_LAB_MARKER")
-    if marker:
-        with Path(marker).open("a", encoding="utf-8") as f:
-            f.write(f"export_report:{report}\n")
+    _mark(f"export_report:{report}")
     return "id,name,email\n" + "\n".join(f"{c['id']},{c['name']},{c['email']}" for c in CUSTOMERS)
+
+
+@server.tool()
+def disable_user(user_id: int) -> str:
+    """Disable a customer login (mock: only records that it happened)."""
+    _mark(f"disable_user:{user_id}")
+    return f"user {user_id} disabled"
+
+
+@server.tool()
+def rotate_keys(scope: str) -> str:
+    """Rotate the API keys in a scope (mock: only records that it happened)."""
+    _mark(f"rotate_keys:{scope}")
+    return f"keys rotated for {scope}"
 
 
 if __name__ == "__main__":

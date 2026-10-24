@@ -12,6 +12,7 @@ import ssl
 from dataclasses import dataclass
 from email.message import EmailMessage
 from pathlib import Path
+from typing import Any
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
@@ -25,6 +26,10 @@ class NotifyConfig(BaseModel):
     webhook_url: str | None = None  # or set ALERT_WEBHOOK_URL in the environment
     subject_prefix: str = "[Honeycomb]"
     dedupe_window_s: int = Field(default=300, ge=0)
+    # A high or critical incident nobody has acknowledged is sent again after this many seconds,
+    # and then again every time as long as it stays open, up to `escalate_max` extra messages.
+    escalate_after_s: int = Field(default=600, ge=0)  # 0 turns escalation off
+    escalate_max: int = Field(default=3, ge=1, le=20)
     timeout_s: float = Field(default=10.0, gt=0, le=60)
 
 
@@ -115,8 +120,16 @@ class Notifier:
     def subject(self, i: Incident) -> str:
         return f"{self.config.subject_prefix} {i.severity.upper()}: {i.title}"
 
-    async def send(self, incident: Incident) -> list[Result]:
+    async def send(self, incident: Incident, *, escalation: int = 0) -> list[Result]:
         text = render_text(incident)
+        subject = self.subject(incident)
+        if escalation:
+            subject = f"{self.config.subject_prefix} ESCALATION {escalation}: {incident.title}"
+            text = f"Nobody has acknowledged this incident yet.\n\n{text}"
+        return await self.deliver(subject, text, {"incident": incident.__dict__, "text": text})
+
+    async def deliver(self, subject: str, text: str, payload: dict[str, Any]) -> list[Result]:
+        """Send one message to every configured channel. Failures come back, they never raise."""
         results: list[Result] = []
         if self.config.email:
             settings = email_settings()
@@ -125,7 +138,7 @@ class Notifier:
             else:
                 try:
                     await asyncio.to_thread(
-                        send_email, settings, self.subject(incident), text, self.config.timeout_s
+                        send_email, settings, subject, text, self.config.timeout_s
                     )
                     results.append(Result("email", True))
                 except Exception as exc:  # never let a mail problem, or its text, leak or crash
@@ -134,9 +147,7 @@ class Notifier:
         if url:
             try:
                 async with httpx.AsyncClient(timeout=self.config.timeout_s) as client:
-                    resp = await client.post(
-                        url, json={"incident": incident.__dict__, "text": text}
-                    )
+                    resp = await client.post(url, json=payload)
                     resp.raise_for_status()
                 results.append(Result("webhook", True))
             except Exception as exc:

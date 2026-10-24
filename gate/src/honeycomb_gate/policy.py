@@ -1,20 +1,21 @@
-"""Policy engine: first-match rules, allow or deny, learning and strict modes (F4).
+"""Policy engine: first-match rules, allow, deny or approve, learning and strict modes (F4).
 
-M1 scope: ``allow`` and ``deny`` with tool, upstream and argument matchers (``max_length`` and
-``max_items`` fire when the argument exceeds the limit). ``approve``
-and caps are parsed but refused at load time until M4, so nobody believes a protection is
-active when it is not. Any internal error denies a high-impact tool (and every tool in
+Rules match on tool, upstream and argument matchers (``max_length`` and ``max_items`` fire when
+the argument exceeds the limit). An ``approve`` rule needs a person to say yes, optionally
+several (``quorum``). ``caps`` limit how much one rule's tools may do: calls per minute, rows in
+a result, bytes in a result. Any internal error denies a high-impact tool (and every tool in
 strict mode).
 """
 
 import fnmatch
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 MAX_REGEX_INPUT = 10000
+CAPS = {"per_minute", "max_rows", "max_result_bytes"}
 
 
 class ArgMatcher(BaseModel):
@@ -47,15 +48,19 @@ class Rule(BaseModel):
     id: str
     match: Match = Field(default_factory=Match)
     action: Literal["allow", "deny", "approve"]
-    quorum: int | None = None
+    quorum: int | None = Field(default=None, ge=1, le=10)
     caps: dict[str, int] | None = None
 
     @model_validator(mode="after")
-    def _m1_scope(self) -> "Rule":
-        if self.action == "approve" or self.quorum is not None:
-            raise ValueError(f"rule {self.id!r}: 'approve' and quorum arrive in M4")
+    def _checks(self) -> "Rule":
+        if self.quorum is not None and self.action != "approve":
+            raise ValueError(f"rule {self.id!r}: quorum only makes sense on an 'approve' rule")
         if self.caps:
-            raise ValueError(f"rule {self.id!r}: caps arrive in M4")
+            unknown = set(self.caps) - CAPS
+            if unknown or any(v < 1 for v in self.caps.values()):
+                raise ValueError(f"rule {self.id!r}: caps are {sorted(CAPS)}, each at least 1")
+            if self.action == "deny":
+                raise ValueError(f"rule {self.id!r}: a deny rule has nothing to cap")
         if self.match.args and self.match.tool is None and self.match.upstream is None:
             # Otherwise a deny rule would hit every tool that merely lacks the argument.
             raise ValueError(f"rule {self.id!r}: argument matchers need a 'tool' or 'upstream'")
@@ -65,7 +70,9 @@ class Rule(BaseModel):
 class Defaults(BaseModel):
     model_config = ConfigDict(extra="forbid")
     high_impact_fail: Literal["closed"] = "closed"
-    approval_timeout_s: int = 120
+    approval_timeout_s: int = Field(default=120, ge=1)  # a request nobody answers by then is denied
+    approval_wait_s: float = Field(default=20, ge=0)  # how long one call waits before "pending"
+    approval_ttl_s: int = Field(default=600, ge=1)  # how long an approved call may still be used
 
 
 class PolicyConfig(BaseModel):
@@ -96,10 +103,12 @@ class PolicyConfig(BaseModel):
 
 @dataclass
 class Decision:
-    action: Literal["allow", "deny"]
+    action: Literal["allow", "deny", "approve"]
     rule_id: str
     reason: str
     hide: bool = False  # for tools/list: deny without needing the arguments
+    quorum: int = 1
+    caps: dict[str, int] = field(default_factory=dict)
 
 
 def _arg_state(args: dict[str, Any], name: str, m: ArgMatcher) -> bool | None:
@@ -154,9 +163,10 @@ class PolicyEngine:
             if any(state is False for state in states):
                 return False
             if any(state is None for state in states):
-                # Cannot be judged (missing or wrong-typed argument). A deny rule treats that as
-                # a match, so an attacker cannot slip past a limit by changing an argument's type.
-                return rule.action == "deny"
+                # Cannot be judged (missing or wrong-typed argument). Deny, approve and capped
+                # rules treat that as a match, so an attacker cannot slip past a limit (more than
+                # five recipients, say) by changing an argument's type.
+                return rule.action in {"deny", "approve"} or bool(rule.caps)
         return True
 
     def evaluate(self, upstream: str, tool: str, args: dict[str, Any] | None) -> Decision:
@@ -165,12 +175,14 @@ class PolicyEngine:
             for rule in self.config.rules:
                 try:
                     matched = self._matches(rule, upstream, tool, args)
-                except Exception:  # a rule that cannot be evaluated: deny rules fail closed
-                    matched = rule.action == "deny"
+                except Exception:  # a rule that cannot be evaluated: restricting rules fail closed
+                    matched = rule.action in {"deny", "approve"} or bool(rule.caps)
                 if matched:
-                    action: Literal["allow", "deny"] = "deny" if rule.action == "deny" else "allow"
-                    hide = action == "deny" and not rule.match.args
-                    return Decision(action, rule.id, f"rule {rule.id}", hide)
+                    hide = rule.action == "deny" and not rule.match.args
+                    return Decision(
+                        rule.action, rule.id, f"rule {rule.id}", hide,
+                        rule.quorum or 1, dict(rule.caps or {}),
+                    )  # fmt: skip
             if self.config.mode == "strict":
                 return Decision("deny", "default-deny", "strict mode: no rule allows this", True)
             return Decision("allow", "default-allow", "learning mode: no rule matched")

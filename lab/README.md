@@ -27,7 +27,7 @@ Run it (needs Docker, on Linux or Docker Desktop with the WSL 2 backend):
 
     uv run python -m lab.run_lab
 
-You should see fifteen `[pass]` lines and `lab passed: 15/15 checks`. Add `--keep` to leave the
+You should see `[pass]` on every line and `lab passed: 25/25 checks`. Add `--keep` to leave the
 containers running afterwards, and `--no-build` to reuse the image you already built. A JSON
 record of the run goes to `lab/results/` (git-ignored).
 
@@ -41,6 +41,8 @@ What it plays:
   and its token revoked, and no real export happens.
 
 The lab's signing key is a fixed value in `docker-compose.yml`, passed to the gate only. It is not a secret, and it keeps the key out of the state folder that the proxy mounts. The containers run as root, which is fine for a lab and not for production.
+
+- S4: an injected instruction asks the agent to rotate every key (needs two approvers), disable a user (needs one) and run a bulk export (capped at 100 rows). The calls are held for approval, one of two approvals is not enough, a request nobody finishes is refused after its timeout, the approved action goes through exactly once, and the export's rows never reach the agent. The runner plays the person with `honeycomb-gate approvals approve`.
 
 When S3 has shown the network really is closed, the runner writes the proof file that
 `honeycomb-gate posture` looks for, and posture then reports the network as verified.
