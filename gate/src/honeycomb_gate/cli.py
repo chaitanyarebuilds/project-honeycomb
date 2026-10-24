@@ -463,7 +463,10 @@ app.add_typer(baseline, name="baseline")
 @baseline.command("show")
 def baseline_show(config: ConfigOpt, agent: Annotated[str, typer.Option()] = "") -> None:
     """Print what the gate has learned about each agent."""
-    profiles = Baselines.load(_cfg(config).baselines_path)
+    try:
+        profiles = Baselines.load(_cfg(config).baselines_path)
+    except StateCorruptError as exc:
+        _fail(str(exc))
     for name, p in sorted(profiles.items()):
         if agent and name != agent:
             continue

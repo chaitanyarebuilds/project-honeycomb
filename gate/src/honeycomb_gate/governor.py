@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 POLL_S = 0.25
 SWEEP_S = 2.0
 MAX_PENDING = 50  # open requests per agent; past that the call is refused outright
+MAX_PENDING_TOTAL = 500  # and across all agents
 Deny = Callable[..., types.CallToolResult]
 
 
@@ -43,21 +44,24 @@ def _rows_in(value: Any) -> int:
 
 
 def count_rows(result: types.CallToolResult) -> int:
-    """Rows in an answer: items of the biggest JSON list in it, else the lines of text.
+    """Rows in an answer: the rows of every content item added up, or its structured content.
 
-    Looks at text, embedded resources and structured content, at any depth.
+    Each text item counts the items of its biggest JSON list at any depth, or else its lines;
+    an image or other binary item counts as one. Structured content usually repeats the text,
+    so the larger of the two is used.
     """
-    rows = _rows_in(result.structured_content)
+    total = 0
     for item in result.content:
         resource = getattr(item, "resource", None)
         text = getattr(item, "text", None) or getattr(resource, "text", None)
         if not isinstance(text, str):
+            total += 1
             continue
         try:
-            rows = max(rows, _rows_in(json.loads(text)))
+            total += max(1, _rows_in(json.loads(text)))
         except (ValueError, RecursionError):
-            rows = max(rows, sum(1 for line in text.splitlines() if line.strip()))
-    return rows
+            total += max(1, sum(1 for line in text.splitlines() if line.strip()))
+    return max(total, _rows_in(result.structured_content))
 
 
 class Governor:
@@ -127,7 +131,8 @@ class Governor:
             approved(used)
             return None
         open_now = [a for a in await asyncio.to_thread(store.all) if a.status == "pending"]
-        if sum(1 for a in open_now if a.agent_id == run.agent_id) >= MAX_PENDING:
+        mine = sum(1 for a in open_now if a.agent_id == run.agent_id)
+        if mine >= MAX_PENDING or len(open_now) >= MAX_PENDING_TOTAL:
             return deny("too_many_approvals_pending", decision.rule_id, "high")
         radius = (
             f"{'high-impact' if self.gate.policy.is_high_impact(tool) else 'ordinary'} tool, "

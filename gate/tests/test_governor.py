@@ -368,3 +368,16 @@ def test_escalating_twice_at_once_sends_once(tmp_path: Path) -> None:
     now = datetime.now(UTC)
     assert gate.incidents.record_escalation("inc_test", now, 600, 3) == 1
     assert gate.incidents.record_escalation("inc_test", now, 600, 3) == 0  # the second gate is late
+
+
+def test_rows_are_added_up_across_content_items_and_binary_items_count() -> None:
+    from honeycomb_gate.governor import count_rows
+
+    many = types.CallToolResult(content=[*_text("row"), *(_text("row") * 999)])
+    assert count_rows(many) == 1000
+    lists = types.CallToolResult(content=[*(_text(json.dumps([1, 2, 3])) * 100)])
+    assert count_rows(lists) == 300
+    images = types.CallToolResult(
+        content=[types.ImageContent(type="image", data="AA==", mime_type="image/png")] * 100
+    )
+    assert count_rows(images) == 100

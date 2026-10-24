@@ -25,6 +25,7 @@ WINDOW_S = 60.0
 MAX_RUNS_KEPT = 2000
 FLUSH_EVERY = 25
 SIZE_FLOOR = 4096  # a tiny answer is never a "spike", whatever the history says
+MAX_AGENTS = 1000  # agents we keep profiles for; later ones are not learned
 
 
 class BaselineConfig(BaseModel):
@@ -54,7 +55,7 @@ class _Run:
 
 def _new_profile() -> dict[str, Any]:
     return {"runs": 0, "tools": {}, "upstreams": [], "peaks": {}, "size_peaks": {},
-            "arg_sizes": [], "hours": [0] * 24}  # fmt: skip
+            "arg_sizes": [], "hours": [0] * 24, "size_anchor": 0}  # fmt: skip
 
 
 def _checked(path: Path, agents: Any) -> dict[str, dict[str, Any]]:
@@ -97,6 +98,8 @@ class Baselines:
         run = self._runs.setdefault(run_id, _Run(agent_id))
         while len(self._runs) > MAX_RUNS_KEPT:  # a long-lived gate must not grow without limit
             del self._runs[next(iter(self._runs))]
+        if agent_id not in self._agents and len(self._agents) >= MAX_AGENTS:
+            return []  # a flood of made-up agent ids must not grow the file without limit
         profile = self.profile(agent_id)
         run.calls.append(now)
         while run.calls and now - run.calls[0] > WINDOW_S:
@@ -117,6 +120,16 @@ class Baselines:
                     usual = percentile99(sizes)
                     detail = f"answer of {result_size} bytes, earlier runs topped out near {usual}"
                     found.append({"kind": "volume", "detail": detail})
+            # The biggest answer of the first runs is kept as an anchor. Growth of up to k times
+            # per run could otherwise ramp the baseline up without any single run standing out.
+            anchor = profile.get("size_anchor", 0)
+            if (
+                anchor
+                and result_size > max(cfg.k**2 * anchor, SIZE_FLOOR)
+                and not any(d["kind"] == "volume" for d in found)
+            ):
+                found.append({"kind": "volume", "detail": f"answer of {result_size} bytes, over "
+                              f"{cfg.k**2:g} times the {anchor} of the first runs"})  # fmt: skip
             peaks = [v for r, v in profile["peaks"].items() if r != run_id]
             if len(peaks) >= cfg.min_runs:
                 limit = max(cfg.k * percentile99(peaks), cfg.rate_floor)
@@ -150,6 +163,8 @@ class Baselines:
             profile[name][run_id] = value
             while len(profile[name]) > cap:  # oldest first: dicts keep their insertion order
                 del profile[name][next(iter(profile[name]))]
+        if not profile.get("size_anchor") and profile["runs"] >= self.config.min_runs:
+            profile["size_anchor"] = max(profile["size_peaks"].values(), default=0)
         profile["arg_sizes"].append(arg_size)
         del profile["arg_sizes"][:-cap]
         profile["hours"][time.gmtime(now).tm_hour] += 1

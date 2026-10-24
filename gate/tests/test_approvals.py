@@ -130,3 +130,9 @@ def test_an_empty_name_is_not_a_person(tmp_path: Path) -> None:
     for blank in ("", "   ", "​\n"):
         assert store.decide(a.id, blank, "approve", ttl_s=TTL, now=1001) == "unnamed"
     assert store.consume(a.key, 1002) is None
+
+
+def test_a_very_long_id_is_just_unknown(tmp_path: Path) -> None:
+    store = ApprovalStore(tmp_path)
+    assert store.get("apr_" + "a" * 400) is None
+    assert store.decide("apr_" + "a" * 400, "asha", "approve", ttl_s=TTL) == "unknown"

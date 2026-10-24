@@ -74,6 +74,8 @@ class ApprovalStore:
         # Ids come from the command line: only an id we could have made reaches the filesystem.
         if not approval_id.startswith("apr_") or not approval_id[4:].isalnum():
             return None
+        if len(approval_id) > 40:  # ours are 30 characters; longer is not an id of ours
+            return None
         path = self._path(approval_id)
         return self._load(path) if path.exists() else None
 

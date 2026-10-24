@@ -208,3 +208,13 @@ def test_a_second_gate_gets_the_lock_message_not_a_corruption_report(tmp_path: P
     with pytest.raises(LogCorruptError, match="already writing"):
         check_state(cfg)
     first.close()
+
+
+def test_a_baseline_file_of_the_wrong_shape_stops_the_gate_and_the_command(tmp_path: Path) -> None:
+    cfg = write_config(tmp_path)
+    (tmp_path / "state").mkdir()
+    (tmp_path / "state" / "baselines.json").write_text('{"agents": {"a": {"runs": 9}}}')
+    shown = CliRunner().invoke(app, ["baseline", "show", "--config", str(cfg)])
+    assert shown.exit_code == 1 and "baseline file" in (shown.stderr or shown.output)
+    with pytest.raises(StateCorruptError):
+        check_state(load_config(cfg))

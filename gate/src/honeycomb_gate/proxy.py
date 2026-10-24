@@ -825,6 +825,7 @@ def check_state(config: GateConfig) -> None:
         )
     # Read every state file now, so a damaged one is reported here, by name, not on a first call.
     PinStore(config.pins_path).entries()
+    Baselines.load(config.baselines_path)
     RunControl(config.runs_path).paused()
     TokenRegistry(config.tokens_path).tokens()
     DecoyBook(config.decoys, list(config.upstreams), config.decoys_path)

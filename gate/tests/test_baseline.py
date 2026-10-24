@@ -112,3 +112,26 @@ def test_a_baseline_file_of_the_wrong_shape_stops_the_start(tmp_path: Path) -> N
         path.write_text(bad)
         with pytest.raises(StateCorruptError):
             Baselines(path, BaselineConfig())
+
+
+def test_growing_a_little_each_run_cannot_ramp_the_baseline_up_forever(tmp_path: Path) -> None:
+    b = learned(tmp_path)
+    flagged_at = None
+    size = 500.0
+    for n in range(6, 20):  # every run 2.9x bigger than the biggest before it, under k=3
+        size *= 2.9
+        found = b.observe(
+            f"run_{n}", AGENT, "crm", "crm__search_customers", 60, int(size), 7000.0 + n
+        )
+        if found and flagged_at is None:
+            flagged_at = n
+    assert flagged_at is not None and flagged_at <= 9  # caught within a few runs, not at 60 MB
+
+
+def test_made_up_agent_ids_do_not_grow_the_file_without_limit(tmp_path: Path) -> None:
+    from honeycomb_gate import baseline
+
+    b = Baselines(tmp_path / "b.json", BaselineConfig())
+    for i in range(baseline.MAX_AGENTS + 50):
+        b.observe(f"r{i}", f"agent-{i}", "crm", "crm__x", 1, 1, 1.0)
+    assert len(b._agents) == baseline.MAX_AGENTS
