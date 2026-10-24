@@ -62,11 +62,13 @@ def model_host() -> str:
 def make_post() -> Post:
     """A function that sends one request to the model API, through the proxy and nowhere else."""
     base = (os.environ.get("HC_LLM_BASE_URL") or "https://api.anthropic.com").rstrip("/")
+    base = base.removesuffix("/v1")  # some providers publish the base with /v1 already on it
     host = model_host()
     if host in LAB_HOSTS or not host:
         raise RuntimeError("HC_LLM_BASE_URL must name the model API, not a lab service")
     headers = {
         "x-api-key": os.environ["LLM_API_KEY"],
+        "authorization": f"Bearer {os.environ['LLM_API_KEY']}",
         "anthropic-version": "2023-06-01",
         "content-type": "application/json",
     }

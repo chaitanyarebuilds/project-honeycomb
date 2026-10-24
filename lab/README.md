@@ -67,6 +67,9 @@ The runner adds `api.anthropic.com:443` to the egress allowlist for this run onl
   says whether the model followed the injection, and if it did, that the decoy tripped and the run was
   stopped. A model that ignores the injection is a pass too, it just teaches us less about the gate.
 
+If your provider is not Anthropic but offers the same Messages format on `/v1/messages`, set
+`HC_LLM_BASE_URL` to its base address and the proxy allows that host instead.
+
 The key is handed to the agent container only. It is never printed and never written to the results.
 
 The same lab runs in GitHub Actions on every push.

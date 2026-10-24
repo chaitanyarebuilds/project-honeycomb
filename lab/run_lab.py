@@ -20,6 +20,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from honeycomb_gate.notify import load_dotenv
 
@@ -433,10 +434,10 @@ def main(argv: list[str] | None = None) -> int:
         load_dotenv(LAB.parent / ".env")
         if not os.environ.get("LLM_API_KEY") or not os.environ.get("HC_LLM_MODEL"):
             raise SystemExit("set LLM_API_KEY and HC_LLM_MODEL in .env first (see lab/README.md)")
-        host = os.environ.get("HC_LLM_BASE_URL", "")
-        os.environ["HC_EXTRA_ALLOW"] = (
-            f"--allow {host.split('//')[-1].strip('/')}:443" if host else f"--allow {MODEL_API}"
-        )
+        base = urlparse(os.environ.get("HC_LLM_BASE_URL", ""))
+        port = base.port or (80 if base.scheme == "http" else 443)
+        target = f"{base.hostname}:{port}" if base.hostname else MODEL_API
+        os.environ["HC_EXTRA_ALLOW"] = f"--allow {target}"
         todo = LLM_ORDER if args.scenario == "all" else chosen(args.scenario)
     else:
         todo = chosen(args.scenario)

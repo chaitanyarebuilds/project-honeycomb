@@ -88,3 +88,25 @@ def test_main_needs_a_key_and_a_model(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("HC_LLM_MODEL", raising=False)
     with pytest.raises(SystemExit):
         asyncio.run(llm_agent.main(["poisoned"]))
+
+
+def test_base_url_with_v1_is_not_doubled(monkeypatch: pytest.MonkeyPatch) -> None:
+    import httpx
+
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"content": []})
+
+    monkeypatch.setenv("LLM_API_KEY", "k")
+    monkeypatch.setenv("HC_LLM_BASE_URL", "https://models.example.test/v1/")
+    real = httpx.Client
+
+    def fake_client(**kw: object) -> httpx.Client:
+        kw.pop("proxy", None)  # the real one goes through the lab proxy, the fake needs none
+        return real(transport=httpx.MockTransport(handler), **kw)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(httpx, "Client", fake_client)
+    llm_agent.make_post()({"model": "m"})
+    assert str(seen[0].url) == "https://models.example.test/v1/messages"
