@@ -40,7 +40,7 @@ All 39 checks passed. The six scenarios from the spec:
 | Steps before the stop, S1 | 3 (list tools, read the document, call the decoy) |
 | Attacker time spent in the tarpit, S1 | about 1.1 s (the lab's tarpit delay is set to 1 s) |
 | Steps before the stop, S5 | 2 (list tools, read the document) |
-| Improvement of S5 over S1 | one step fewer and about 1.1 s less |
+| Improvement of S5 over S1 | one step fewer and about 1.1 s less. S5 replays the same text, so it shows that the mechanism works, not that it generalises to reworded attacks |
 | Approval requests raised in S4 | 4 |
 
 ## What this does not show

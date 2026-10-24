@@ -50,7 +50,7 @@ from honeycomb_gate.incidents import (
     open_token_incident,
 )
 from honeycomb_gate.locking import FileLock, LockedError, StateCorruptError
-from honeycomb_gate.memory import Memory, Rule
+from honeycomb_gate.memory import MAX_REMEMBERED, Memory, Rule
 from honeycomb_gate.notify import Notifier
 from honeycomb_gate.policy import PolicyEngine
 from honeycomb_gate.redact import sanitize_name
@@ -126,6 +126,7 @@ class Gate:
         self.governor = Governor(self)
         self.baselines = Baselines(config.baselines_path, config.baseline)
         self.memory = Memory(config.memory_path, config.memory)
+        self._memory_seen: set[tuple[str, str]] = set()
         self.inventory = Inventory(config.inventory_path)
         self.http_runs: dict[str, Run] = {}
         self.require_claims = False  # set when serving over HTTP: no token, no run
@@ -424,7 +425,7 @@ class Gate:
 
     def _remember(self, run: Run, label: str, payload: Any) -> None:
         """Keep what this run just read, in case it turns out to be how an attack got in."""
-        text = "\n".join(strings_of(payload, keys=False))[:50_000]
+        text = "\n".join(strings_of(payload, keys=False))[:MAX_REMEMBERED]
         if text:
             run.recent.append((sanitize_name(label), text))
 
@@ -438,12 +439,32 @@ class Gate:
     async def _trip_memory(
         self, run: Run, rule: Rule, label: str, base: dict[str, Any]
     ) -> types.CallToolResult:
-        """A result matched something learned from an earlier incident."""
-        self.memory.hit(rule.id)
+        """A result matched something learned from an earlier incident.
+
+        Only a match on a whole earlier text pauses the run: no honest page repeats one. A match
+        on a single sentence withholds the result and opens an incident, because an honest page
+        that quotes the sentence would match too.
+        """
+        self._best_effort(run, self.memory.hit, rule.id)
         details = {"rule_id": rule.id, "kind": rule.kind}
-        if self.config.memory.on_match == "withhold":
-            run.emit("memory.rule_matched", severity="high", decision="withhold",
-                     rule_id=rule.id, details=details, **base)  # fmt: skip
+        pause = self.config.memory.on_match == "pause" and rule.kind == "text"
+        if not pause:
+            if (run.id, rule.id) not in self._memory_seen:  # once per run and rule, not per result
+                if len(self._memory_seen) > 5000:
+                    self._memory_seen.clear()
+                self._memory_seen.add((run.id, rule.id))
+                run.emit("memory.rule_matched", severity="high", decision="withhold",
+                         rule_id=rule.id, details=details, **base)  # fmt: skip
+                incident = self._best_effort(
+                    run,
+                    lambda: self._open_incident(run, lambda events: open_memory_incident(
+                        run_id=run.id, agent_id=run.agent_id, tool=label, rule_id=rule.id,
+                        kind=rule.kind, paused=False, events=events,
+                        config_hint=self._config_hint(),
+                    )),
+                )  # fmt: skip
+                if incident is not None:
+                    self._spawn(self._notify(run, incident))
             return _blocked("This result was withheld by honeycomb-gate.")
         return await self._trip(
             run,
@@ -584,7 +605,12 @@ class Gate:
         rule = None
         if where == "result" and not too_big and not found:
             texts = strings_of(payload, keys=False)
-            rule = await asyncio.to_thread(self.memory.match, texts)
+            try:
+                rule = await asyncio.to_thread(self.memory.match, texts)
+            except Exception as exc:
+                run.emit("gate.error", severity="high", details={"error": type(exc).__name__,
+                         "while": "checking the result"}, **base)  # fmt: skip
+                raise MCPError(types.INVALID_REQUEST, "Blocked by honeycomb-gate.") from exc
         if rule is not None:
             await self._trip_memory(run, rule, label, base)
             raise MCPError(types.INVALID_REQUEST, "Blocked by honeycomb-gate.")
@@ -824,7 +850,12 @@ class Gate:
             raise
 
         # 3. Honeytokens in the result: something handed the agent a planted secret. Withhold it.
-        too_big, found, rule = await asyncio.to_thread(self._inspect_result, result)
+        try:
+            too_big, found, rule = await asyncio.to_thread(self._inspect_result, result)
+        except Exception as exc:  # the rules can't be read: the result is not handed over unchecked
+            run.emit("gate.error", severity="high", details={"error": type(exc).__name__,
+                     "while": "checking the result"}, **base)  # fmt: skip
+            return deny("result_unchecked", "gate", "high")
         if too_big:  # refused unseen, so the agent never receives it; also keeps the scan quick
             return deny("result_too_large", "gate", "medium")
         if found:

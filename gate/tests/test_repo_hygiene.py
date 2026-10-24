@@ -19,19 +19,28 @@ ATTRIBUTION = [
     "claude." + "ai/code",
     "Claude " + "Code",
     "noreply@" + "anthropic",
+    "Claude-" + "Session",
+    "\U0001f916",  # the robot emoji that tool footers like to add
 ]
 PRIVATE = ["@gmail" + ".com", "cmo" + "@", "wolfrom" + "technologies", "chetana" + "panta"]
 SECRETS = {
     "an AWS access key": re.compile(r"AKIA[0-9A-Z]{16}"),
     "a private key": re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
-    "an API key": re.compile(r"\bsk-[A-Za-z0-9]{24,}"),
+    "an API key": re.compile(r"\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{24,}"),
+    "a fine-grained GitHub token": re.compile(r"\bgithub_pat_[A-Za-z0-9_]{30,}"),
+    "a Google API key": re.compile(r"\bAIza[0-9A-Za-z_-]{35}"),
+    "a Hugging Face token": re.compile(r"\bhf_[A-Za-z0-9]{30,}"),
     "a GitHub token": re.compile(r"\bgh[pousr]_[A-Za-z0-9]{30,}"),
     "a Slack token": re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}"),
 }
 
 
 # Fake keys that the redaction tests use on purpose. Anything else that looks like a key fails.
-KNOWN_FAKES = ["AKIA" + "ABCDEFGHIJKLMNOP"]
+KNOWN_FAKES = [
+    "AKIA" + "ABCDEFGHIJKLMNOP",
+    "sk-live-" + "abcdefghijklmnop1234",
+    "sk-test-" + "0123456789abcdefghij",
+]
 
 
 def tracked() -> list[Path]:
@@ -90,3 +99,18 @@ def test_the_private_working_notes_and_runtime_state_are_not_tracked() -> None:
     assert "CLAUDE.md" not in names and ".env" not in names
     assert not [n for n in names if n.startswith("lab/results/") or "/.honeycomb/" in n]
     assert not [n for n in names if n.endswith((".sqlite3", "tokens.json", "identity-keys.json"))]
+
+
+def test_commit_messages_carry_no_attribution_or_private_addresses() -> None:
+    try:
+        log = subprocess.run(
+            ["git", "log", "-200", "--format=%an <%ae>%n%B%x00"],
+            cwd=ROOT,
+            capture_output=True,
+            check=True,
+            text=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError):
+        pytest.skip("not a git checkout")
+    lowered = log.lower()
+    assert [p for p in ATTRIBUTION + PRIVATE if p.lower() in lowered] == []
