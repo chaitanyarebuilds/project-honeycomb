@@ -1,0 +1,7 @@
+# M0 config: transparent pass-through, one stdio upstream. Policy rules arrive in M1.
+schema_version: 1
+event_log: .honeycomb/events.jsonl
+upstreams:
+  sample:
+    transport: stdio
+    command: ["uv", "run", "python", "gate/tests/sample_server.py"]

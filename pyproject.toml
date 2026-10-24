@@ -1,0 +1,37 @@
+[project]
+name = "honeycomb-gate"
+version = "0.0.1"
+description = "honeycomb-gate: an immune system for AI agents (Phase 0 of Project Honeycomb)"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
+dependencies = ["mcp>=2.3,<3", "pydantic>=2", "typer>=0.12", "PyYAML>=6", "httpx>=0.27"]
+
+[project.scripts]
+honeycomb-gate = "honeycomb_gate.cli:app"
+
+[dependency-groups]
+dev = ["pytest", "pytest-asyncio", "ruff", "mypy", "types-PyYAML"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["gate/src/honeycomb_gate"]
+
+[tool.pytest.ini_options]
+testpaths = ["gate/tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+src = ["gate/src", "gate/tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["gate/src"]

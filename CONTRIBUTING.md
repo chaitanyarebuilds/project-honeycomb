@@ -23,6 +23,10 @@ For anything bigger than a typo, open an issue or a discussion first, so nobody 
 3. Sign off every commit: `git commit -s`. This adds a `Signed-off-by` line confirming you have the right to submit the work under the project's licenses, as described by the [Developer Certificate of Origin](https://developercert.org/).
 4. Open a pull request and fill in the template.
 
+## Development rules and setup
+
+Code contributors should read [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for the engineering rules, commands and conventions.
+
 ## Scope and safety
 
 Honeycomb is a defensive project. Contributions must respect these rules:

@@ -16,6 +16,12 @@ Phase 0 tests these hypotheses from the videos:
 - Human-approval governors with blast-radius caps stop self-inflicted damage without making agents useless.
 - Remembering an incident makes the second attempt fail faster.
 
+## 1a. Verified versions (recorded 24 October 2026)
+
+- **Python MCP SDK:** `mcp` 2.3.0 on PyPI (requires Python 3.10+). This is a new major version: servers are built with `Server(name, on_list_tools=..., on_call_tool=...)`, and `Client` accepts a `StdioServerParameters`. The M0 proxy pins `mcp>=2.3,<3`.
+- **MCP spec revision:** the SDK source references **2026-07-28** and still supports 2025-11-25 and earlier. Secondary news sources report 2026-07-28 as the latest final revision. We could not open modelcontextprotocol.io from the build environment, so this is **not yet confirmed from the official site**.
+- **Open question for Chaitanya (affects F7 and the session manager in section 4):** one source says 2026-07-28 removes the protocol-level session mechanism, and the SDK now runs a "per-request envelope" mode beside the older handshake. Run identity (F7) must therefore not depend on MCP session IDs. Proposal: the gate issues its own `run_id` per connection (stdio) or per token (HTTP). Needs your OK before M3, and the details must be re-checked against the official spec text.
+
 ## 2. Users
 
 - **Primary:** small and mid-sized organisations and IT service firms that run AI agents with tool access, such as coding agents, support agents and internal operations agents.
@@ -288,11 +294,11 @@ All services sit on an `internal: true` network.
 
 **M0: research spike and scaffolding (week 1)**
 
-- [ ] Record the current MCP spec revision and Python SDK version here
-- [ ] Survey the prior art in section 10 and write `docs/PRIOR-ART-MCP.md`, ending with a build-on-or-build-own recommendation for decision D1
-- [ ] Set up the `uv` project, ruff, mypy, pytest and a GitHub Actions CI workflow
-- [ ] Build a transparent pass-through proxy for one stdio upstream, with event logging
-- [ ] Demo: an MCP client connected through the gate to a sample server, with events visible
+- [x] Record the current MCP spec revision and Python SDK version here (section 1a)
+- [x] Survey the prior art in section 10 and write `docs/PRIOR-ART-MCP.md`, ending with a build-on-or-build-own recommendation for decision D1 (licences still to be confirmed by reading repos; D1 awaiting decision)
+- [x] Set up the `uv` project, ruff, mypy, pytest and a GitHub Actions CI workflow (CI not yet run on GitHub: push was blocked)
+- [x] Build a transparent pass-through proxy for one stdio upstream, with event logging
+- [x] Demo: an MCP client connected through the gate to a sample server, with events visible (`policies/example.yaml`, then `honeycomb-gate events tail`)
 
 **M1: firewall (weeks 2–3)**
 
