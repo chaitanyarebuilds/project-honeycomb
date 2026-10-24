@@ -21,6 +21,18 @@ artifacts (`.github/workflows/release.yml`). It does not publish them.
     git tag -a v0.1.0 -m "v0.1.0: the first public build of the Phase 0 gate"
     git push origin v0.1.0
 
+## If the tag could not be pushed
+
+The build sandbox the first release was prepared in can push to the branch but not tags (the remote
+answers 403). In that case create the tag from a machine that can, on the commit CI passed:
+
+    git fetch origin
+    git tag -a v0.1.0 8132388 -m "v0.1.0: the first public build of the Phase 0 gate"
+    git push origin v0.1.0
+
+Or make a release in the GitHub web page: pick the tag name `v0.1.0`, target that commit, and
+publish. Either way the release workflow starts on its own.
+
 ## Publishing, by a person
 
 - **PyPI.** Create the `honeycomb-gate` project and add this repository as a trusted publisher
