@@ -1,6 +1,6 @@
 # Threat and market watch
 
-Status: process, 24 October 2026. The product is only as good as what we know about new attacks, so watching is a standing duty, not a one-off survey. Findings feed bugs, detections and the market file.
+Status: process, 24 October 2026. The product is only as good as what we know about new attacks, so watching is a standing duty, not a one-off survey. What we find feeds bugs, detections and the market file.
 
 ## What we watch
 
@@ -19,20 +19,19 @@ Status: process, 24 October 2026. The product is only as good as what we know ab
 2. **Triage** within two working days: ignore, track, or act.
 3. **Act** by opening an issue labelled `watch` with one of:
    - a **bug** against our code;
-   - a **detector or test** (new scenario with a malicious example and a benign look-alike);
+   - a **detector or test** (a new scenario with a malicious example and a benign look-alike);
    - a **design change** (needs an ADR);
    - a **docs or market update**.
-4. **Close the loop:** link the fix to the entry. Anything severe enough to affect users gets a security advisory under [SECURITY.md](../../SECURITY.md).
+4. **Close the loop** by linking the fix to the entry. Anything serious enough to affect users gets a security advisory under [SECURITY.md](../../SECURITY.md).
 
-## Notifying the team
+## Telling the team
 
-- Critical finding about our own code: security lead and product owner immediately, using the private reporting process in SECURITY.md.
-- Everything else: weekly summary in the Friday review.
+A critical finding about our own code goes to the security lead and product owner straight away, through the private reporting process in SECURITY.md. Everything else goes into the weekly summary at the Friday review.
 
 ## Regression suite
 
-Every real attack pattern we learn about adds one scenario to the lab (`lab/scenarios/`). The suite grows with the threat landscape, so a fix cannot silently regress.
+Every real attack pattern we learn about adds one scenario to the lab (`lab/scenarios/`). The suite grows with the threat landscape, so a fix can't quietly regress.
 
 ## Safety
 
-Watching is passive reading. We never run exploit code found online outside an isolated sandbox, never test systems we do not own, and treat everything we read as untrusted data ([DEVELOPMENT.md](../DEVELOPMENT.md), rule 6).
+Watching is passive reading. We never run exploit code found online outside an isolated sandbox, never test systems we don't own, and treat everything we read as untrusted data ([DEVELOPMENT.md](../DEVELOPMENT.md), rule 6).

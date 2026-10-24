@@ -4,7 +4,7 @@ Status: proposal, 24 October 2026. Detail for [ADR-0006](../adr/0006-agent-prese
 
 ## 1. What "first layer of defence" means here
 
-Honeycomb is the first thing an agent meets when it tries to use an organisation's tools, and the last thing standing between a hijacked agent and the data. It does not replace endpoint, identity or web defences. It covers the agent surface that those tools mostly do not see.
+Project Honeycomb is the first thing an agent meets when it tries to use an organisation's tools, and the last thing standing between a hijacked agent and the data. It doesn't replace endpoint, identity or web defences. It covers the agent surface that those tools mostly don't see.
 
 ## 2. How agents get in and stay (and what stops each step)
 
@@ -31,19 +31,19 @@ Honeycomb is the first thing an agent meets when it tries to use an organisation
 | 5 | Isolate the agent (egress deny-all) | policy only; off by default outside the lab | yes |
 | 6 | Rotate credentials | human approval, quorum for critical | no |
 
-Steps 3 and 4 run automatically on a trip because trips are high-fidelity and reversible. Steps 5 and 6 can hurt the business, so a person is always in the loop (see the autoimmunity discussion in [ARCHITECTURE.md](../ARCHITECTURE.md)). Governors cap how much any action can touch.
+Steps 3 and 4 run automatically on a trip, because trips are high-fidelity and reversible. Steps 5 and 6 can hurt the business, so a person is always in the loop (see the autoimmunity discussion in [ARCHITECTURE.md](../ARCHITECTURE.md)). Governors cap how much any action can touch.
 
 ## 4. Notifying the IT or security team
 
 ### The incident message
 
-Every incident answers five questions in the first lines:
+Every incident answers five questions in its first lines:
 
 1. **What happened?** One sentence ("Agent `support-bot` called decoy tool `crm__export_all_customer_data`").
-2. **How sure are we?** Detection type and why a legitimate run would not do this.
+2. **How sure are we?** The detection type, and why a legitimate run would not do this.
 3. **What did the gate already do?** For example "run paused, identity revoked at 10:15:02".
 4. **What should you do now?** Ordered steps, such as review the evidence, check the upstream's access log, decide whether to rotate credentials X and Y.
-5. **How protected are we?** Enforcement level (L0 to L3) and anything the gate could not stop.
+5. **How protected are we?** The enforcement level (L0 to L3) and anything the gate could not stop.
 
 Evidence (event ids, redacted arguments, timeline) follows. Secrets are redacted before storage and again before sending.
 
@@ -60,7 +60,7 @@ Duplicate alerts for the same run are merged into one incident within a time win
 
 ### Later (managed service)
 
-A human operations centre receives the same incidents for customers with no security team, with CERT-In six-hour and DPDP 72-hour reporting drafted from the incident record (`regulatory_clock_start`). That is a separate business decision, covered in [HARD-PROBLEMS.md](../HARD-PROBLEMS.md), problem 7.
+A human operations centre receives the same incidents for customers with no security team. CERT-In six-hour and DPDP 72-hour reporting would be drafted from the incident record (`regulatory_clock_start`). That is a separate business decision, covered in [HARD-PROBLEMS.md](../HARD-PROBLEMS.md), problem 7.
 
 ## 5. Playbooks to write (M2 to M5)
 

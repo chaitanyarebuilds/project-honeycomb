@@ -1,6 +1,6 @@
 # Market, competitors and gaps
 
-Status: working document, 24 October 2026. Facts marked **verified** were read from the project's own repository or licence file; **reported** means a secondary source (listing, news, vendor page) that we have not confirmed. Update this file whenever [THREAT-WATCH.md](THREAT-WATCH.md) finds a change.
+Status: working document, 24 October 2026. Facts marked **verified** were read from the project's own repository or licence file. **Reported** means a secondary source (listing, news, vendor page) that we haven't confirmed. Update this file whenever [THREAT-WATCH.md](THREAT-WATCH.md) finds a change.
 
 ## 1. Who does what (agent and MCP layer)
 
@@ -21,21 +21,21 @@ Status: working document, 24 October 2026. Facts marked **verified** were read f
 
 | Pattern | How it works today | Gap we can fill |
 | --- | --- | --- |
-| Prompt and response filters in a gateway | Inspect text for injection, secrets, PII | Text filters are probabilistic and can be evaded. Our approach does not depend on classifying text: a decoy call or token use is a deterministic fact |
+| Prompt and response filters in a gateway | Inspect text for injection, secrets, PII | Text filters are probabilistic and can be evaded. We don't depend on classifying text: a decoy call or a token use is a deterministic fact |
 | Tool scanners | Scan once, or at install time | Scan-time checks miss mid-run changes. Pinning with quarantine at call time closes the rug-pull window |
-| Decoy and honeytoken projects | Small tools or a hosted token service | They detect and alert. They do not pause the run, revoke its identity, enforce egress or measure the result in a lab |
+| Decoy and honeytoken projects | Small tools or a hosted token service | They detect and alert. They don't pause the run, revoke its identity, enforce egress or measure the result in a lab |
 | Platform "agent security" modules | Bundled with a large suite | Costly and complex for small organisations; closed; no public evidence of containment results |
 | Gateways with plugins | General policy and filters | No agent-lifetime controls, no inventory, no incident and escalation path aimed at the IT team |
 | Human approval | Often a UI click in the gateway | Rarely tied to blast-radius caps, quorum and timeouts-deny, and rarely tested in a lab |
 
 ## 3. Where Honeycomb is different (hypotheses to test, not claims)
 
-1. **Deterministic detection first.** Decoys, honeytokens and pinning produce evidence, not scores.
-2. **Containment, not just detection.** A trip pauses the run, revokes its identity and starts an incident within seconds, and we publish the measured time.
-3. **Honest about enforcement.** The product states its enforcement level, so nobody mistakes an advisory gate for a wall ([ADR-0004](../adr/0004-enforcement-levels.md)).
-4. **Agents that stay.** Inventory, lifetimes, persistence and memory audits aim at agents living in a system, which gateways rarely address ([ADR-0006](../adr/0006-agent-presence-and-persistence.md)).
-5. **Evidence in public.** A lab anyone can run, with scenarios and numbers.
-6. **Small-organisation fit.** One command to run, sensible defaults, and a notification path that works without a security team.
+1. Deterministic detection first. Decoys, honeytokens and pinning give us evidence, not scores.
+2. Containment, not just detection. A trip pauses the run, revokes its identity and starts an incident within seconds, and we publish the measured time.
+3. Honesty about enforcement. The product states its enforcement level, so nobody mistakes an advisory gate for a wall ([ADR-0004](../adr/0004-enforcement-levels.md)).
+4. Agents that stay. Inventory, lifetimes, persistence and memory audits are aimed at agents living inside a system, something gateways rarely address ([ADR-0006](../adr/0006-agent-presence-and-persistence.md)).
+5. Evidence in public: a lab anyone can run, with scenarios and numbers.
+6. A fit for small organisations. One command to run, sensible defaults, and a notification path that works without a security team.
 
 What we should **not** claim: that decoys or honeytokens are new, that we are the first, or that we stop attacks that bypass the gate on an unenforced network.
 
@@ -53,7 +53,7 @@ Sources: the research report behind the video series and [SOURCES.md](../SOURCES
 | Injection through tools, documents and logs | Treat all text as untrusted; deterministic enforcement; no model in the decision path |
 | Third parties in 48 percent of breaches (Verizon DBIR 2026) | Pin and scope every upstream; treat upstream servers as untrusted |
 
-## 5. Feature ideas from the market worth adding to the backlog
+## 5. Feature ideas from the market for the backlog
 
 - A scanner mode that audits existing MCP client configs (ADR-0006, F13).
 - Signed tool manifests, if the MCP ecosystem converges on one (watch item).
@@ -64,4 +64,4 @@ Sources: the research report behind the video series and [SOURCES.md](../SOURCES
 
 - Real licences and release cadence for Docker, Microsoft and Snyk projects (blocked network; needs a reading of each repository).
 - Whether any gateway already ships decoys by default. Re-run the keyword search on a schedule ([THREAT-WATCH.md](THREAT-WATCH.md)).
-- Customer willingness to pay. Needs the design-partner conversations in [PROGRAM-PLAN.md](PROGRAM-PLAN.md).
+- Customer willingness to pay. This needs the design-partner conversations in [PROGRAM-PLAN.md](PROGRAM-PLAN.md).

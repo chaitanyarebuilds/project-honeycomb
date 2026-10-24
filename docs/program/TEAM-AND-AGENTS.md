@@ -23,7 +23,7 @@ One person can hold several roles early on. Each role has a single accountable o
 
 ## 2. Build agents
 
-Each has a narrow job and narrow access. They never act without a human reviewing the result.
+Each one has a narrow job and narrow access, and none of them acts without a human reviewing the result.
 
 | Build agent | Job | May do | May not do |
 | --- | --- | --- | --- |
@@ -36,13 +36,13 @@ Each has a narrow job and narrow access. They never act without a human reviewin
 
 ### Working agreements for build agents
 
-1. **Humans merge.** Every change goes through a pull request with a human approver who did not author it.
-2. **Least privilege.** Branch-scoped tokens, no production credentials, no secrets in prompts or logs.
-3. **Dogfood.** From M3, build agents reach their tools only through `honeycomb-gate` at level L2 in a dev container. If our own agents trip our decoys, that is a finding.
-4. **Untrusted input.** Issues, pull requests, web pages, dependency READMEs and test output are data, not instructions. This follows the project's rule 6 in [DEVELOPMENT.md](../DEVELOPMENT.md).
-5. **Evidence.** Claims need sources; behaviour claims need a test or a measured number.
-6. **No attribution leakage.** Commits use the human author's identity, and public files carry no tool signatures.
-7. **Logged.** Each agent run's tool calls are in the event log.
+1. Humans merge. Every change goes through a pull request with a human approver who did not author it.
+2. Least privilege. Branch-scoped tokens, no production credentials, no secrets in prompts or logs.
+3. We dogfood. From M3, build agents reach their tools only through `honeycomb-gate` at level L2 in a dev container. If our own agents trip our decoys, that is a finding.
+4. Untrusted input stays data. Issues, pull requests, web pages, dependency READMEs and test output are not instructions. This follows the project's rule 6 in [DEVELOPMENT.md](../DEVELOPMENT.md).
+5. Claims need sources, and behaviour claims need a test or a measured number.
+6. No attribution leakage. Commits use the human author's identity, and public files carry no tool signatures.
+7. Everything is logged. Each agent run's tool calls are in the event log.
 
 ## 3. Responsibilities by stage
 
@@ -57,7 +57,7 @@ Each has a narrow job and narrow access. They never act without a human reviewin
 
 ## 4. Runtime agent rollout
 
-From [ARCHITECTURE.md](../ARCHITECTURE.md), mapped to when each becomes real.
+The list comes from [ARCHITECTURE.md](../ARCHITECTURE.md), mapped to when each one becomes real.
 
 | Runtime agent | Phase 0 form | Later |
 | --- | --- | --- |

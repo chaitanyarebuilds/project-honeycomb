@@ -1,6 +1,6 @@
 # Architecture decision records
 
-One short file per decision that shapes the architecture, a schema or a security default. Add a new record (next number) before changing any of those. Status values: **Proposed** (needs the owner's OK), **Accepted**, **Superseded**. ADR-0001 to 0008 were accepted by the owner on 24 October 2026.
+One short file per decision that shapes the architecture, a schema or a security default. Before changing any of those, add a new record with the next number. Status values: **Proposed** (needs the owner's OK), **Accepted** and **Superseded**. The owner accepted ADR-0001 to 0008 on 24 October 2026.
 
 | ADR | Decision | Status |
 | --- | --- | --- |

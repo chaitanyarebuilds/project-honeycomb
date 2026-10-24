@@ -1,6 +1,6 @@
 # Development guide
 
-Rules and setup for anyone contributing code to Project Honeycomb. For the ways to help and the scope rules, read [CONTRIBUTING.md](../CONTRIBUTING.md) first. The design is in [PHASE0-SPEC.md](PHASE0-SPEC.md), which is the source of truth for what Phase 0 builds.
+Rules and setup for anyone writing code for Project Honeycomb. For the ways to help and the scope rules, read [CONTRIBUTING.md](../CONTRIBUTING.md) first. The design is in [PHASE0-SPEC.md](PHASE0-SPEC.md), which is the source of truth for what Phase 0 builds.
 
 ## Non-negotiable rules
 

@@ -1,12 +1,12 @@
 # ADR-0007: Incident object, response ladder, notification and escalation
 
-Status: Accepted (owner approval, 24 October 2026). Date: 2026-10-24. Replaces F11 "Alerts" with a fuller design. The owner approved steps 3 and 4 as automatic on a decoy or honeytoken trip, and everything beyond step 4 needing a human. Further automatic holding actions are an open question (see Consequences).
+Status: Accepted by the owner on 24 October 2026. Date: 2026-10-24. Replaces F11 "Alerts" with a fuller design. The owner approved steps 3 and 4 as automatic on a decoy or honeytoken trip, and everything beyond step 4 as needing a human. Whether the gate may take further automatic holding actions is still open (see Consequences).
 
 ## Decision
 
-**Incident object:** id, severity, state (open, acknowledged, contained, closed), run and agent, event ids as evidence, actions the gate already took, recommended next steps, notification log, enforcement level at the time, and a `regulatory_clock_start` field for later CERT-In and DPDP workflows.
+An incident records its id, severity, state (open, acknowledged, contained, closed), run and agent, event ids as evidence, the actions the gate already took, recommended next steps, a notification log and the enforcement level at the time. It also has a `regulatory_clock_start` field for later CERT-In and DPDP workflows.
 
-**Response ladder:**
+The response ladder:
 
 | Step | Action | Who may trigger |
 | --- | --- | --- |
@@ -18,14 +18,16 @@ Status: Accepted (owner approval, 24 October 2026). Date: 2026-10-24. Replaces F
 | 5 | Isolate the agent (egress deny-all) | policy-configured; off by default outside the lab |
 | 6 | Rotate credentials the agent could reach | human approval only (quorum for critical) |
 
-**Notification:** critical incidents go to the primary channel at once. If not acknowledged within N minutes (default 10), escalate to the secondary channel. Every message says what the gate already did and what the person should do next. Phase 0 channels: webhook and CLI. Email, Slack and Telegram come later (D3).
+Critical incidents go to the primary channel at once. If nobody acknowledges within N minutes (default 10), they escalate to the secondary channel. Every message says what the gate already did and what the person should do next. Phase 0 channels are webhook and CLI. Email, Slack and Telegram come later (D3).
 
 ## Why
 
-Decoy and honeytoken trips are high-fidelity and reversible (a run can be resumed), so steps 3 and 4 are safe to automate. Isolation and credential rotation can hurt the business, so they are never silent (see "autoimmunity" in [ARCHITECTURE.md](../ARCHITECTURE.md)).
+Decoy and honeytoken trips are high-fidelity and reversible, since a run can be resumed, so steps 3 and 4 are safe to automate. Isolation and credential rotation can hurt the business, so they are never silent (see "autoimmunity" in [ARCHITECTURE.md](../ARCHITECTURE.md)).
 
 ## Consequences
 
-- Needs an acknowledgement path (`honeycomb-gate incidents ack`).
-- Steps 3 and 4 are automatic on a trip (approved). Until signed run tokens exist (M3), "revoke identity" means the run id is retired and the gate refuses it, including after a restart.
-- Open question for the owner: while a human is on their way, may the gate also take other reversible holding actions (for example step 5, isolating the agent) and leave irreversible ones (step 6, credential rotation) for the human? Until answered, only steps 3 and 4 are automatic.
+We need an acknowledgement path (`honeycomb-gate incidents ack`).
+
+Steps 3 and 4 are automatic on a trip, as approved. Until signed run tokens exist (M3), "revoke identity" means the run id is retired and the gate refuses it, including after a restart.
+
+One question for the owner is still open. While a human is on their way, may the gate also take other reversible holding actions, such as step 5 (isolating the agent), and leave irreversible ones, such as step 6 (credential rotation), for the human? Until that's answered, only steps 3 and 4 are automatic.

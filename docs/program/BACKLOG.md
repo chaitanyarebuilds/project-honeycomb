@@ -1,6 +1,6 @@
 # Backlog (M0 to M5)
 
-Status: proposal, 24 October 2026. Each item has an ID, an owning role, a size (S ≤ 1 day, M ≤ 3 days, L ≤ 1 week) and acceptance criteria. Every item also meets the definition of done in [PROGRAM-PLAN.md](PROGRAM-PLAN.md). Items marked **ADR** depend on a decision in [docs/adr/](../adr/README.md).
+Status: proposal, 24 October 2026. Every item has an ID, an owning role, a size (S ≤ 1 day, M ≤ 3 days, L ≤ 1 week) and acceptance criteria. Each one also has to meet the definition of done in [PROGRAM-PLAN.md](PROGRAM-PLAN.md). Items marked **ADR** depend on a decision in [docs/adr/](../adr/README.md).
 
 ## E0 Foundations (M0, mostly done)
 
@@ -20,8 +20,8 @@ Status: proposal, 24 October 2026. Each item has an ID, an owning role, a size (
 | E1-2 | Redaction of keys, tokens and URLs with credentials | Detection | M | Malicious samples redacted; benign look-alikes untouched |
 | E1-3 | SQLite index and `events query` | Platform | M | Filter by kind, severity, run, time; handles 1M events |
 | E1-4 | Hash chain and `events verify` | Platform | M | Edited, deleted and reordered lines each detected |
-| E1-5 | Second sink and rotation | Platform | M | Done in M1 except rotation: checkpoints after every event; rotation must keep the chain verifiable |
-| E1-6 | Keyed hash chain and a remote sink | Security | M | The chain key lives outside the state directory; an attacker who can rewrite local files cannot forge a valid chain or a valid sink |
+| E1-5 | Second sink and rotation | Platform | M | Done in M1 except rotation. Checkpoints are written after every event; rotation has to keep the chain verifiable |
+| E1-6 | Keyed hash chain and a remote sink | Security | M | The chain key lives outside the state directory, so an attacker who can rewrite local files cannot forge a valid chain or a valid sink |
 
 ## E2 Registry, pinning, policy (M1)
 

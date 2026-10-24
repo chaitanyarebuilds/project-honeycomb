@@ -1,14 +1,14 @@
 # Programme plan
 
-Status: proposal, 24 October 2026. Owner: Chaitanya Pandita. The product phases (0 to 4) are in [ROADMAP.md](../ROADMAP.md); this file says **how** we deliver them: workstreams, gates, staffing, measures and what would make us stop or change course.
+Status: proposal, 24 October 2026. Owner: Chaitanya Pandita. The product phases (0 to 4) are in [ROADMAP.md](../ROADMAP.md). This file covers **how** we deliver them: workstreams, gates, staffing, measures and what would make us stop or change course.
 
 ## 1. Mission and scope of the first product
 
 Project Honeycomb is a defensive layer that sits first in line between an organisation's AI agents and its systems. It has four jobs, in this order:
 
-1. **Keep out.** Only registered, least-privileged agents get in; tools are pinned and untrusted; nothing leaves except through an allowlist.
+1. **Keep out.** Only registered, least-privileged agents get in. Tools are pinned and untrusted, and nothing leaves except through an allowlist.
 2. **Catch fast.** Decoys, honeytokens and baselines make a hijacked or runaway agent visible in seconds with almost no false alarms.
-3. **Stop and contain.** Pause, revoke, isolate, within limits people set.
+3. **Stop and contain.** Pause, revoke and isolate, within limits people set.
 4. **Tell the humans.** The IT or security team gets an incident that says what happened, what the gate already did and what to do next, with escalation if nobody answers.
 
 A fifth job, **don't let agents live in the system**, runs through all four: inventory, short run lifetimes, persistence and memory audits ([ADR-0006](../adr/0006-agent-presence-and-persistence.md)).
@@ -29,7 +29,7 @@ A fifth job, **don't let agents live in the system**, runs through all four: inv
 
 ### 2.2 Phases, gates and exit criteria
 
-Phase 0 is split so each stage ends in something demonstrable. A **gate** is a go or no-go review by the owner; evidence for each gate lives in the repository.
+We split Phase 0 so each stage ends in something we can demonstrate. A **gate** is a go or no-go review by the owner, and the evidence for each gate lives in the repository.
 
 | Stage | Window | Contents | Gate and exit criteria |
 | --- | --- | --- | --- |
@@ -45,14 +45,14 @@ After G6 the programme follows the product roadmap: Phase 1 web shield (4 to 9 m
 
 ### 2.3 Weekly rhythm
 
-- **Monday:** plan the week from [BACKLOG.md](BACKLOG.md); name one demo per week.
-- **Daily:** short async update (done, next, blocked).
-- **Friday:** demo, update [RISK-REGISTER.md](RISK-REGISTER.md), run the threat watch ([THREAT-WATCH.md](THREAT-WATCH.md)), update the milestone checklist.
-- **Every gate:** one-page review: evidence, metrics, decisions needed.
+- Monday: plan the week from [BACKLOG.md](BACKLOG.md) and name one demo for the week.
+- Daily: a short async update (done, next, blocked).
+- Friday: demo, update [RISK-REGISTER.md](RISK-REGISTER.md), run the threat watch ([THREAT-WATCH.md](THREAT-WATCH.md)), and update the milestone checklist.
+- At every gate: a one-page review covering evidence, metrics and decisions needed.
 
 ### 2.4 Definition of done (every item)
 
-Code, tests with a malicious example and a benign look-alike, docs, ADR if architecture or a schema changed, OWASP agentic mapping updated, CI green, reviewed by someone who did not write it, and no secrets or real data.
+An item is done when it has code, tests with a malicious example and a benign look-alike, and docs. It also needs an ADR if architecture or a schema changed, the OWASP agentic mapping updated, CI green, review by someone who did not write it, and no secrets or real data.
 
 ## 3. Measures
 
@@ -81,13 +81,13 @@ Code, tests with a malicious example and a benign look-alike, docs, ADR if archi
 
 ## 5. Staffing assumption
 
-Confirmed 24 October 2026: two people (the owner and the CTO) plus coding agents ([TEAM-AND-AGENTS.md](TEAM-AND-AGENTS.md)). The two people split the roles in section 1 of that file; coding agents do most implementation, testing and drafting under human review. Treat the dates in section 2.2 as targets and expect the human review step to be the bottleneck. If M1 takes more than three weeks, cut M4 baselines first and keep decoys, tokens, identity and egress.
+Confirmed 24 October 2026: two people (the owner and the CTO) plus coding agents ([TEAM-AND-AGENTS.md](TEAM-AND-AGENTS.md)). The two people split the roles in section 1 of that file, and coding agents do most of the implementation, testing and drafting under human review. Read the dates in section 2.2 as targets, and expect the human review step to be the bottleneck. If M1 takes more than three weeks, we cut M4 baselines first and keep decoys, tokens, identity and egress.
 
 ## 6. Risks and kill criteria
 
 The full list is in [RISK-REGISTER.md](RISK-REGISTER.md). We stop or change course if:
 
-- **At G2:** the trip-to-pause time cannot get under 5 seconds on the lab machine. The core design is then wrong.
-- **At G4:** S0 still shows false positives after two tuning rounds. Decoy-first detection is then not the near-zero-false-positive signal we assumed.
-- **Any time:** a major gateway ships decoys, honeytokens and pinning as defaults. Then we switch to the plugin route in ADR-0001 and focus on governors, the lab and the managed service.
-- **Any time:** legal advice says counter-injection or any active measure is unsafe in India. We keep it off, as the spec already does.
+- At G2, the trip-to-pause time can't get under 5 seconds on the lab machine. The core design is then wrong.
+- At G4, S0 still shows false positives after two tuning rounds. Decoy-first detection is then not the near-zero-false-positive signal we assumed.
+- At any time, a major gateway ships decoys, honeytokens and pinning as defaults. Then we switch to the plugin route in ADR-0001 and focus on governors, the lab and the managed service.
+- At any time, legal advice says counter-injection or any active measure is unsafe in India. We keep it off, as the spec already does.

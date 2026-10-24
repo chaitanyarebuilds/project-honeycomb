@@ -1,14 +1,14 @@
 # ADR-0004: Enforcement levels and an honest posture report
 
-Status: Accepted (owner approval, 24 October 2026). Date: 2026-10-24.
+Status: Accepted by the owner on 24 October 2026. Date: 2026-10-24.
 
 ## Context
 
-The spec says the gate is advisory unless the agent can only reach tools and the internet through it. Operators will not read that. The product must say it.
+The spec says the gate is advisory unless the agent can only reach tools and the internet through it. Operators won't read that, so the product has to say it.
 
 ## Decision
 
-Define four levels and have `honeycomb-gate posture` (and every incident) state which one is active:
+We define four levels. `honeycomb-gate posture` and every incident state which one is active.
 
 | Level | Name | What is true |
 | --- | --- | --- |
@@ -21,5 +21,6 @@ The posture report also lists what is missing to reach the next level.
 
 ## Consequences
 
-- Marketing and docs may claim protection only for the level that is actually enforced.
-- The lab runs at L2 (internal Docker network). Deployment docs describe how to reach L2 on Docker and, with weaker guarantees, on a host firewall.
+Marketing and docs may claim protection only for the level that is actually enforced.
+
+The lab runs at L2 (internal Docker network). Deployment docs describe how to reach L2 on Docker and, with weaker guarantees, on a host firewall.

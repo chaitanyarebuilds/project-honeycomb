@@ -1,12 +1,12 @@
 # Threat model: honeycomb-gate (M1)
 
-Status: first version, 24 October 2026, covering what exists after M1 (event log, pinning, policy). It is updated at every milestone. **A community developer is to review this before gate G1**; findings go in section 8. Method: list assets and trust boundaries, then walk each component asking what an attacker could do, what stops them, how we test it and what remains.
+Status: first version, 24 October 2026, covering what exists after M1 (event log, pinning, policy). We update it at every milestone. **A community developer should review it before gate G1**; findings go in section 8. Method: list assets and trust boundaries, then walk each component asking what an attacker could do, what stops them, how we test it and what remains.
 
 ## 1. Scope
 
 In scope: the gate process, its config and state files (`pins.json`, the event log, the second sink), its CLI, and the link between agent, gate and upstream servers.
 
-Out of scope for M1: the host operating system, the agent's own model, network enforcement (M3), decoys and honeytokens (M2), run tokens (M3), approvals (M4). Where a control belongs to a later milestone, the table says so, so nobody assumes it exists.
+Out of scope for M1: the host operating system, the agent's own model, network enforcement (M3), decoys and honeytokens (M2), run tokens (M3), approvals (M4). Where a control belongs to a later milestone, the table says so, so nobody assumes it already exists.
 
 ## 2. Assets
 
@@ -31,7 +31,7 @@ flowchart LR
   U -.->|tool definitions, results| G
 ```
 
-The agent, the upstream servers and everything they send (descriptions, results, errors) are untrusted. The gate host, the operator and the policy file are trusted. Without network enforcement (M3) nothing stops the agent from bypassing the gate: the product treats that as enforcement level L0 or L1 ([ADR-0004](adr/0004-enforcement-levels.md)).
+The agent, the upstream servers and everything they send (descriptions, results, errors) are untrusted. The gate host, the operator and the policy file are trusted. Without network enforcement (M3), nothing stops the agent bypassing the gate. The product treats that as enforcement level L0 or L1 ([ADR-0004](adr/0004-enforcement-levels.md)).
 
 ## 4. Adversaries
 
@@ -91,5 +91,5 @@ Add a row for every new attack found by the [threat watch](program/THREAT-WATCH.
 | Date | Reviewer | Findings | Status |
 | --- | --- | --- | --- |
 | 24 Oct 2026 | Author | First draft | Superseded by the next row |
-| 24 Oct 2026 | Independent automated review of the M1 code (a separate reviewer with read-only access, findings then reproduced by the author) | 16 findings: 2 high, 10 medium, 4 low. Fixed in the same milestone: post-approval swap, unpinned fields, argument-type bypass of deny rules, bad regex disabling policy, narrow high-impact patterns, redaction stall, camelCase keys, missing-evidence verification, tail truncation, blind approval, forged log lines, ambiguous routing, audit-after-action, pagination loop, locking, file permissions. Overclaims in this document corrected. Residual: unkeyed hash chain (E1-6) | Closed; awaiting community review |
-| 24 Oct 2026 | Independent automated review of the M2 code (read-only reviewer, findings then reproduced by the author) | 12 findings (5 medium, 7 low) plus overclaims. Fixed in the same milestone: pause lost on restart, token smuggled in a tool name, incident text injection, hostile upstream tripping decoys, in-flight calls and duplicate incidents, token evasion (case, zero-width, base64, split values, padding), acknowledgement overwritten by a slow send, silent background failures, decoy state file permissions, event-loop blocking on resume checks, tarpit fingerprints, weak lab guard. Wording corrected in T14, T17, T24 and T26 | Closed; awaiting community review |
+| 24 Oct 2026 | Independent automated review of the M1 code (a separate reviewer with read-only access, findings then reproduced by the author) | 16 findings: 2 high, 10 medium, 4 low. Fixed in the same milestone: post-approval swap, unpinned fields, argument-type bypass of deny rules, bad regex disabling policy, narrow high-impact patterns, redaction stall, camelCase keys, missing-evidence verification, tail truncation, blind approval, forged log lines, ambiguous routing, audit-after-action, pagination loop, locking, file permissions. Claims in this document that went further than the code were corrected. Residual: unkeyed hash chain (E1-6) | Closed; awaiting community review |
+| 24 Oct 2026 | Independent automated review of the M2 code (read-only reviewer, findings then reproduced by the author) | 12 findings (5 medium, 7 low) plus claims that went further than the code. Fixed in the same milestone: pause lost on restart, token smuggled in a tool name, incident text injection, hostile upstream tripping decoys, in-flight calls and duplicate incidents, token evasion (case, zero-width, base64, split values, padding), acknowledgement overwritten by a slow send, silent background failures, decoy state file permissions, event-loop blocking on resume checks, tarpit fingerprints, weak lab guard. Wording fixed in T14, T17, T24 and T26 | Closed; awaiting community review |

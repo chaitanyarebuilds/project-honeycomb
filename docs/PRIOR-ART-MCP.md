@@ -1,6 +1,6 @@
 # Prior art: MCP gateways, scanners and decoys
 
-Status: M0 survey, 24 October 2026. Update, 24 October 2026: ContextForge, Lasso, Thinkst Canarytokens and the official MCP specification repository have now been cloned and read. Their rows below are marked **verified**. Rows still marked unconfirmed come from search summaries and listings and need the same check. Findings are summarised in [program/ARCHITECTURE-REVIEW.md](program/ARCHITECTURE-REVIEW.md) and [program/MARKET-AND-GAPS.md](program/MARKET-AND-GAPS.md).
+Status: M0 survey, 24 October 2026. Update, 24 October 2026: ContextForge, Lasso, Thinkst Canarytokens and the official MCP specification repository have now been cloned and read, and their rows below are marked **verified**. Rows still marked unconfirmed come from search summaries and listings, and need the same check. Findings are summarised in [program/ARCHITECTURE-REVIEW.md](program/ARCHITECTURE-REVIEW.md) and [program/MARKET-AND-GAPS.md](program/MARKET-AND-GAPS.md).
 
 ## Summary table
 
@@ -20,20 +20,20 @@ Sources for the last three: [agent-canary](https://mcpservers.org/servers/dorian
 
 ## What this means
 
-1. **Decoys and honeytokens on their own are not new.** Three open-source projects and Thinkst already do decoy MCP tools. Our edge has to be the combination: decoy trip that also pauses the run, revokes identity, and feeds learned rules (S5), plus egress control and approvals, in one lab that anyone can run. This is a weaker claim than "first deception layer for agents", and docs should not make the stronger one.
-2. **Gateways with policy hooks exist.** ContextForge is the strongest candidate for building on: Apache-2.0 and a plugin hook model. It is also large (many features we do not need), so adopting it adds a heavy dependency and its own attack surface.
-3. **We found no open-source gateway that combines policy proxying with decoys, honeytokens, run identity and approvals.** Absence from search results is not proof; the check should be repeated by reading the repos.
-4. **The protocol is moving.** The MCP spec revision 2026-07-28 and Python SDK 2.x change how sessions work (see `docs/PHASE0-SPEC.md` section 1a). Any gateway we build on must already support that, which is another point in favour of checking each project's current state.
+1. Decoys and honeytokens on their own are not new. Three open-source projects and Thinkst already do decoy MCP tools. Our edge has to be the combination: a decoy trip that also pauses the run, revokes identity and feeds learned rules (S5), plus egress control and approvals, in one lab that anyone can run. That's a weaker claim than "first deception layer for agents", and the docs shouldn't make the stronger one.
+2. Gateways with policy hooks exist. ContextForge is the strongest candidate to build on: Apache-2.0, with a plugin hook model. It's also large, with many features we don't need, so adopting it brings a heavy dependency and its own attack surface.
+3. We found no open-source gateway that combines policy proxying with decoys, honeytokens, run identity and approvals. Absence from search results isn't proof, so we should repeat the check by reading the repos.
+4. The protocol is moving. The MCP spec revision 2026-07-28 and Python SDK 2.x change how sessions work (see `docs/PHASE0-SPEC.md` section 1a). Any gateway we build on must already support that, which is another reason to check each project's current state.
 
 ## Recommendation for D1 (for Chaitanya to decide)
 
-**Keep our own minimal proxy for M0 and M1**, as the spec's default says, and re-run this survey by reading the repos before starting M2. Reasons:
+**Keep our own minimal proxy for M0 and M1**, as the spec's default says, and re-run this survey by reading the repos before starting M2. The reasons:
 
-- The M0 proxy is about 150 lines on the official SDK, so the cost of owning it is low.
-- The spec's own decision rule needs a permissively licensed, well-maintained gateway covering F1 to F4. Only ContextForge clearly meets the licence test, and we have not yet read its code.
+- The M0 proxy is about 150 lines on the official SDK, so owning it costs little.
+- The spec's decision rule needs a permissively licensed, well-maintained gateway that covers F1 to F4. Only ContextForge clearly passes the licence test, and we haven't yet read its code.
 - Our differentiators (F5, F6, F7, F9, F10, memory) need hooks at session and run level that a general gateway may not expose.
 
-Alternative if you prefer speed: build F5 to F10 as ContextForge plugins. That means judging its plugin API first, which is roughly a day of reading.
+The alternative, if you'd rather go fast, is to build F5 to F10 as ContextForge plugins. We'd have to judge its plugin API first, which is roughly a day of reading.
 
 ## Next checks (needs network access to GitHub)
 

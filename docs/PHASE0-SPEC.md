@@ -19,8 +19,8 @@ Phase 0 tests these hypotheses from the videos:
 ## 1a. Verified versions (recorded 24 October 2026)
 
 - **Python MCP SDK:** `mcp` 2.3.0 on PyPI (requires Python 3.10+). This is a new major version: servers are built with `Server(name, on_list_tools=..., on_call_tool=...)`, and `Client` accepts a `StdioServerParameters`. The M0 proxy pins `mcp>=2.3,<3`.
-- **MCP spec revision:** **2026-07-28** is confirmed as the newest dated revision in the official `modelcontextprotocol/modelcontextprotocol` repository (folders 2024-11-05, 2025-03-26, 2025-06-18, 2025-11-25, 2026-07-28, plus `draft`). The SDK serves it and still supports 2025-11-25 and earlier. The repository is moving its licence from MIT to Apache-2.0.
-- **Sessions are gone:** the 2026-07-28 changelog removes protocol-level sessions and the `Mcp-Session-Id` header from Streamable HTTP. List endpoints no longer vary per connection, and servers needing state use explicit handles passed as tool arguments (SEP-2567). Run identity (F7) must not depend on MCP sessions. See [ADR-0002](adr/0002-gate-minted-run-identity.md).
+- **MCP spec revision:** **2026-07-28** is the newest dated revision in the official `modelcontextprotocol/modelcontextprotocol` repository (folders 2024-11-05, 2025-03-26, 2025-06-18, 2025-11-25, 2026-07-28, plus `draft`). The SDK serves it and still speaks 2025-11-25 and earlier. The repository is moving its licence from MIT to Apache-2.0.
+- **Sessions are gone:** the 2026-07-28 changelog removes protocol-level sessions and the `Mcp-Session-Id` header from Streamable HTTP. List endpoints no longer vary per connection, and a server that needs state uses explicit handles passed as tool arguments (SEP-2567). So run identity (F7) cannot rely on MCP sessions. See [ADR-0002](adr/0002-gate-minted-run-identity.md).
 
 ## 2. Users
 
@@ -119,15 +119,15 @@ flowchart LR
 
 - Decoys are defined in config and injected into `tools/list`, with names and descriptions believable for the organisation.
 - They are never forwarded upstream.
-- Any call trips `decoy.tripped` (critical). The run is paused, its identity revoked and an incident opened, all automatically (ADR-0007, steps 3 and 4). Nothing beyond that happens without a person. A paused run stays blocked until `honeycomb-gate runs resume`, which retires the old identity and issues a new one. The pause survives a restart: a gate that starts while a run is paused starts paused too, under a new run id that the operator resumes. In M2, "revoking the identity" means retiring the run id; signed run tokens come in M3.
-- The trip response is either an immediate error or a tarpit: slowly dripped, plausible synthetic data built from templates.
-- Decoy names are drawn per deployment from a vocabulary and stored in the state directory, so a deployment keeps its decoys but two deployments do not share a fingerprint. A decoy that would collide with a real tool name is left out and `decoy.collision` is logged; calls to that name go to the real tool. They are excluded from baselines. Credential-like decoys return a fresh honeytoken, so later use of it is caught too.
-- Tarpit responses are template-based, seeded by the call, so the same question always gets the same answer. Row count, id range, phone prefix, example domain, wording and delay differ per deployment. They use only reserved example domains and never real data. `on_trip.response: error` returns no data instead.
+- Any call trips `decoy.tripped` (critical). The gate pauses the run, revokes its identity and opens an incident, all on its own (ADR-0007, steps 3 and 4). Anything beyond that waits for a person. A paused run stays blocked until `honeycomb-gate runs resume`, which retires the old identity and issues a new one. The pause survives a restart: a gate that starts while a run is paused starts paused too, under a new run id that the operator resumes. In M2, "revoking the identity" means retiring the run id; signed run tokens come in M3.
+- On a trip the gate answers with either an immediate error or a tarpit: plausible synthetic data, built from templates and dripped out slowly.
+- Decoy names are drawn per deployment from a vocabulary and stored in the state directory. A deployment keeps its own decoys, and two deployments do not share a fingerprint. A decoy that would collide with a real tool name is left out and `decoy.collision` is logged; calls to that name go to the real tool. They are excluded from baselines. Credential-like decoys return a fresh honeytoken, so later use of it is caught too.
+- Tarpit responses come from templates and are seeded by the call, so the same question always gets the same answer. Row count, id range, phone prefix, example domain, wording and delay differ per deployment. They use only reserved example domains and never real data. `on_trip.response: error` returns no data instead.
 
 **F6. Honeytokens.**
 
 - `honeycomb-gate tokens create --kind <api-key|db-url|webhook-url|password> --place <path>` generates fake credentials with an embedded ID and plants them as an env-style line in a file (or `.env.old` in a folder) in the agent's workspace. It refuses a path inside a git repository unless `--allow-in-repo` is given.
-- The gate scans the tool name, the arguments and the tool results for every active registered token (by value or by its embedded id, ignoring case and invisible characters, and also inside base64 or split across fields). A hit in the name or arguments blocks the call before it is forwarded; a hit in a result withholds the result. Either trips `honeytoken.used` (critical) and the same pause, revoke and incident steps as a decoy. Token values are masked in everything that is logged. Calls larger than 4 million characters are refused. Scanning egress logs arrives with the egress proxy in M3.
+- The gate scans the tool name, the arguments and the tool results for every active registered token. It matches by value or by embedded id, ignoring case and invisible characters, and also finds tokens inside base64 or split across fields. A hit in the name or arguments blocks the call before it is forwarded; a hit in a result withholds the result. Either one trips `honeytoken.used` (critical) and the same pause, revoke and incident steps as a decoy. Token values are masked in everything that is logged. Calls larger than 4 million characters are refused. Scanning egress logs arrives with the egress proxy in M3.
 - Tokens are generated at deploy time and never committed.
 
 **F7. Run identity.**
@@ -158,8 +158,8 @@ flowchart LR
 
 **F11. Alerts and incidents** (see ADR-0007).
 
-- A trip opens an incident (a JSON file under `incidents/`) whose message answers five questions: what happened, how sure, what the gate already did, what to do now, how protected we are. `honeycomb-gate incidents list|show|ack`.
-- Delivered by email (SMTP, settings from the environment or `.env`, never from the repo) and a generic webhook. A failure to send is logged as `notify.failed` and never weakens containment; the run is already paused. `honeycomb-gate notify test` sends a labelled test message.
+- A trip opens an incident (a JSON file under `incidents/`). Its message answers five questions: what happened, how sure we are, what the gate already did, what to do now, and how protected we are. `honeycomb-gate incidents list|show|ack`.
+- Incidents go out by email (SMTP, with settings from the environment or `.env`, never from the repo) and a generic webhook. If sending fails, the gate logs `notify.failed`; containment is not weakened, because the run is already paused. `honeycomb-gate notify test` sends a labelled test message.
 - Escalation when nobody acknowledges arrives in M4.
 - Delivered to the console and a webhook as JSON.
 - Severity levels are info, low, medium, high and critical. Repeats are deduplicated within a time window.
@@ -205,7 +205,11 @@ flowchart LR
 }
 ```
 
-Changes in M1 (ADR-0002, ADR-0005; schema v1 was not yet released): `run_id` is always present and is minted by the gate, one per connection; `session_id` is gone from the core schema and may be added only when a transport provides one; `prev_hash` and `hash` chain every event to the one before it (SHA-256 over the canonical JSON of the event without `hash`). `session.started`, `session.paused` and `session.ended` mark the lifecycle of a run. Reasons for a denial are in `details.reason`. `call.allowed` is written before the call is forwarded and `call.completed` after it (with `latency_ms`), so a call never happens without a record. The checkpoint rows written to the second sink are not events. Upstream names are lower-case letters, digits and `-` (1 to 32 characters, starting with a letter). Honeytoken events carry `details.honeytoken_id` (not `token_id`: the redactor hides anything named like a secret). `args_redacted` is passed through secret redaction before it is stored.
+Changes made in M1 (ADR-0002, ADR-0005; schema v1 had not been released yet):
+
+`run_id` is always present. The gate mints it, one per connection. `session_id` is gone from the core schema and may be added only when a transport provides one. `prev_hash` and `hash` chain every event to the one before it (SHA-256 over the canonical JSON of the event without `hash`). `session.started`, `session.paused` and `session.ended` mark the lifecycle of a run, and the reason for a denial is in `details.reason`.
+
+`call.allowed` is written before the call is forwarded and `call.completed` after it (with `latency_ms`), so a call never happens without a record. The checkpoint rows written to the second sink are not events. Upstream names are lower-case letters, digits and `-` (1 to 32 characters, starting with a letter). Honeytoken events carry `details.honeytoken_id`, not `token_id`, because the redactor hides anything named like a secret. `args_redacted` goes through secret redaction before it is stored.
 
 Event kinds:
 
@@ -219,7 +223,16 @@ Event kinds:
 - `memory.rule_learned`, `memory.rule_matched`
 - `gate.error`
 
-**Policy file (sketch).** Implemented in M1: `mode`, `high_impact`, `rules` with `allow` and `deny`, and the matchers `tool` (glob), `upstream`, and per-argument `equals`, `regex`, `max_length` and `max_items`. `max_length` and `max_items` are limits: the matcher fires when the argument **exceeds** them, so a rule can target oversized arguments. `approve`, `quorum` and `caps` are refused at load time until M4, and unknown fields are rejected. Argument matchers must name a `tool` or `upstream`; a deny rule treats a missing or wrong-typed argument as a match. Also configurable: `upstreams.<name>.env` (the only environment an upstream process receives; the gate's own environment, such as mail credentials, is never passed on), `decoys` (`count`, `vocabulary`, `placement`, `on_trip.response`, `on_trip.tarpit_delay_s`), `notify` (`email`, `webhook_url`, `dedupe_window_s`), `agent_id`, `state_dir`, `event_log`, `alert_sink` (second sink for high and critical events and a checkpoint after every event), and `recheck_ttl_s` (default 0: re-check each tool's live definition on every call).
+**Policy file (sketch).** M1 implements `mode`, `high_impact`, `rules` with `allow` and `deny`, and the matchers `tool` (glob), `upstream`, and per-argument `equals`, `regex`, `max_length` and `max_items`. `max_length` and `max_items` are limits: the matcher fires when the argument **exceeds** them, so a rule can target oversized arguments. `approve`, `quorum` and `caps` are refused at load time until M4, and unknown fields are rejected. Argument matchers must name a `tool` or `upstream`. A deny rule treats a missing or wrong-typed argument as a match.
+
+These can also be configured:
+
+- `upstreams.<name>.env`: the only environment an upstream process receives. The gate's own environment, such as mail credentials, is never passed on.
+- `decoys`: `count`, `vocabulary`, `placement`, `on_trip.response`, `on_trip.tarpit_delay_s`.
+- `notify`: `email`, `webhook_url`, `dedupe_window_s`.
+- `agent_id`, `state_dir` and `event_log`.
+- `alert_sink`: the second sink, which gets high and critical events and a checkpoint after every event.
+- `recheck_ttl_s`: default 0, which re-checks each tool's live definition on every call.
 
 ```yaml
 schema_version: 1
@@ -307,7 +320,7 @@ All services sit on an `internal: true` network.
 **M0: research spike and scaffolding (week 1)**
 
 - [x] Record the current MCP spec revision and Python SDK version here (section 1a)
-- [x] Survey the prior art in section 10 and write `docs/PRIOR-ART-MCP.md`, ending with a build-on-or-build-own recommendation for decision D1 (D1 decided; main licences now verified)
+- [x] Survey the prior art in section 10 and write `docs/PRIOR-ART-MCP.md`, ending with a build-on-or-build-own recommendation for decision D1 (D1 is decided and the main licences are now verified)
 - [x] Set up the `uv` project, ruff, mypy, pytest and a GitHub Actions CI workflow 
 - [x] Build a transparent pass-through proxy for one stdio upstream, with event logging
 - [x] Demo: an MCP client connected through the gate to a sample server, with events visible (`policies/example.yaml`, then `honeycomb-gate events tail`)
@@ -317,14 +330,14 @@ All services sit on an `internal: true` network.
 - [x] Event log (F2) and the `events` CLI: redaction, hash chain, SQLite index, `events tail|query|verify`, second sink with checkpoints
 - [x] Tool registry, pinning and quarantine (F3): `tools list|show|approve`, description flags
 - [x] Policy engine allow and deny, plus modes (F4): `policy check`; fails closed for high-impact tools
-- [x] `docs/THREAT-MODEL.md` (awaiting community review before gate G1)
-- [x] S2 passes (as an automated test against the sample server; the Docker lab version arrives with the lab in M3)
+- [x] `docs/THREAT-MODEL.md` (waiting for community review before gate G1)
+- [x] S2 passes (as an automated test against the sample server; the Docker lab version comes with the lab in M3)
 
 **M2: decoys (weeks 3–4)**
 
 - [x] Decoy tools and tarpit (F5)
 - [x] Honeytokens (F6)
-- [x] S1 passes, and the honeytoken half of S3 passes (arguments and results; egress logs arrive in M3)
+- [x] S1 passes, and the honeytoken half of S3 passes (arguments and results; egress logs come in M3)
 - [x] Incident record and email/webhook notifier (F11, first part), tested against a local fake mail server; the first real send is run by the owner with `honeycomb-gate notify test`
 
 **M3: identity and egress (weeks 5–6)**
@@ -388,11 +401,11 @@ Verify the current status of each, since this list reflects 2025–2026 knowledg
 
 Record each decision here with its date and reason.
 
-Team assumption (24 Oct 2026): two people (the owner and the CTO) plus coding agents, so dates in the programme plan are planning targets, not promises. No legal adviser is engaged for now: everything is built and tested only on systems the project owns, and counter-injection stays off.
+Team assumption (24 Oct 2026): the team is two people (the owner and the CTO) plus coding agents, so the dates in the programme plan are targets, not promises. No legal adviser is engaged for now. Everything is built and tested only on systems the project owns, and counter-injection stays off.
 
 ## 11a. Approved architecture changes (24 October 2026)
 
-The owner approved ADR-0001 to 0008 from the architecture review ([program/ARCHITECTURE-REVIEW.md](program/ARCHITECTURE-REVIEW.md)). They are implemented milestone by milestone; where the sections above still say "session" or "alerts", read them through these records. Schema changes land in M1 (see backlog E1-1).
+The owner approved ADR-0001 to 0008 from the architecture review ([program/ARCHITECTURE-REVIEW.md](program/ARCHITECTURE-REVIEW.md)). We build them in step with the milestones. Where the sections above still say "session" or "alerts", read them through these records. Schema changes land in M1 (see backlog E1-1).
 
 | Change | Record | Affects |
 | --- | --- | --- |
