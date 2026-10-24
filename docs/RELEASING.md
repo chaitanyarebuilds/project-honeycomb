@@ -24,7 +24,8 @@ artifacts (`.github/workflows/release.yml`). It does not publish them.
 ## If the tag could not be pushed
 
 The build sandbox the first release was prepared in can push to the branch but not tags (the remote
-answers 403). In that case create the tag from a machine that can, on the commit CI passed:
+answers 403), so v0.1.0 was published from the GitHub web page. If you are in the same position,
+create the tag from a machine that can, on the commit CI passed:
 
     git fetch origin
     git tag -a v0.1.0 8132388 -m "v0.1.0: the first public build of the Phase 0 gate"

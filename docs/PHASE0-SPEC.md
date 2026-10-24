@@ -388,7 +388,7 @@ How it works. When a run trips a decoy or a honeytoken, the gate looks at the la
 - [x] `lab-run` with JSON and Markdown results
 - [x] `docs/LAB-RESULTS.md` draft
 - [x] OWASP agentic mapping table filled in (section 13)
-- [ ] Tag v0.1.0. CI is green on commit 8132388, which carries version 0.1.0. The tag exists locally in the build sandbox, which cannot push tags; the owner pushes it (see docs/RELEASING.md).
+- [x] Tag v0.1.0, on commit 8132388, where CI was green. Published as a GitHub pre-release on 24 October 2026; the release workflow built the wheel and the container image as artifacts.
 
 **v0.1.0 is done when** S0 to S5 pass in CI with the scripted attacker, an outside developer can run the lab from the README in under 30 minutes on Windows (Docker Desktop) or Linux, and every feature has tests that include benign look-alikes.
 
